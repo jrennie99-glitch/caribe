@@ -56,6 +56,7 @@ export const api = {
   products:     (merchant) => request('GET', '/products?merchant=' + encodeURIComponent(merchant)),
   productAdd:   (b) => request('POST', '/products/add', b),
   buyProduct:   (b) => request('POST', '/products/buy', b),
+  insights:     ()  => request('GET',  '/insights'),
   callConfig:   ()  => request('GET',  '/call/config'),
   callSignal:   (b) => request('POST', '/call/signal', b),
 };

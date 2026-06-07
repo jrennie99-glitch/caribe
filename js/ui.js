@@ -372,6 +372,10 @@ function renderHome(){
       <div class="qa" data-act="scan"><div class="ic">${icon('scan')}</div><div class="t">Scan &amp; Pay</div></div>
       <div class="qa" data-act="cashin"><div class="ic">${icon('plus')}</div><div class="t">Cash in</div></div>
     </div>
+    <div class="card" data-ask style="margin:14px 18px 0"><div class="row">
+      <div class="av" style="background:linear-gradient(135deg,var(--violet),var(--sea))">✨</div>
+      <div class="m"><div class="n">Ask Caribe</div><div class="s">Send money or check spending, just by asking</div></div>
+      <div class="chev">${icon('chev')}</div></div></div>
     <div class="sec"><h3>People</h3><span class="muted" style="margin-left:auto;font-size:12px">tap to send</span></div>
     <div class="card">${
       s.contacts.length? s.contacts.map(c=>`<div class="row" data-send="${c.id}">${avatar(c.name,c.color)}
@@ -386,6 +390,7 @@ function renderHome(){
   app().querySelectorAll('[data-act]').forEach(n=>n.onclick=()=>action(n.dataset.act));
   app().querySelectorAll('[data-send]').forEach(n=>n.onclick=()=>sendTo(n.dataset.send));
   app().querySelectorAll('[data-tab]').forEach(n=>n.onclick=()=>{tab=n.dataset.tab;render();});
+  const ask=app().querySelector('[data-ask]'); if(ask) ask.onclick=()=>askCaribe();
   countUp($('#balnum'), store.balance());
 }
 
@@ -459,6 +464,8 @@ function renderMe(){
       <div class="row" data-kyc><div class="av" style="background:#16a7c9">🪪</div><div class="m"><div class="n">Identity verification</div><div class="s">${kycLabel(u)}</div></div>${(u.kycTier>=2||u.kycStatus==='verified_full')?'<span class="badge">Tier 2</span>':`<div class="chev">${icon('chev')}</div>`}</div>
       <div class="row" style="cursor:default"><div class="av" style="background:#2fd9c5">🏦</div><div class="m"><div class="n">Sand Dollar account</div><div class="s">${u.railAccountId||'—'}</div></div></div>
       <div class="row" data-cashout><div class="av" style="background:#f5b53d">🏧</div><div class="m"><div class="n">Cash out</div><div class="s">Withdraw to Sand Dollar</div></div><div class="chev">${icon('chev')}</div></div>
+      <div class="row" data-insights><div class="av" style="background:#1296c4">📊</div><div class="m"><div class="n">Spending insights</div><div class="s">Where your money goes</div></div><div class="chev">${icon('chev')}</div></div>
+      <div class="row" data-ask2><div class="av" style="background:linear-gradient(135deg,var(--violet),var(--sea))">✨</div><div class="m"><div class="n">Ask Caribe</div><div class="s">Your money assistant</div></div><div class="chev">${icon('chev')}</div></div>
       <div class="row" data-tutorial><div class="av" style="background:#7c5cff">🎓</div><div class="m"><div class="n">Replay tutorial</div><div class="s">A quick tour of how Caribe works</div></div><div class="chev">${icon('chev')}</div></div>
     </div>
     <div class="pad"><button class="btn ghost" id="logout">Log out</button></div>
@@ -467,6 +474,8 @@ function renderMe(){
   const co=app().querySelector('[data-cashout]'); if(co) co.onclick=()=>cashOut();
   const kc=app().querySelector('[data-kyc]'); if(kc) kc.onclick=()=>kycUpload();
   const tt=app().querySelector('[data-tutorial]'); if(tt) tt.onclick=()=>startTutorial();
+  const ins=app().querySelector('[data-insights]'); if(ins) ins.onclick=()=>{tab='insights';render();};
+  const a2=app().querySelector('[data-ask2]'); if(a2) a2.onclick=()=>askCaribe();
 }
 function kycLabel(u){
   if(u.kycStatus==='pending_review') return 'Under review · documents submitted';
@@ -926,6 +935,73 @@ function buyItem(productId,name,price){
   });
 }
 
+// ---------- AI money assistant ----------
+function askCaribe(){
+  const bg=openSheet(`<h2>✨ Ask Caribe</h2><p class="lead">Your money assistant</p>
+    <div id="asktx" class="asktx"></div>
+    <div class="askchips">${["What's my balance?","How much did I spend this week?","Send 20 to a friend","Recent activity"].map(s=>`<span class="chip ask-sug">${s}</span>`).join('')}</div>
+    <div style="display:flex;gap:8px;margin-top:10px"><input id="askin" placeholder="Ask anything…" style="flex:1;border:1.5px solid var(--line);border-radius:14px;padding:13px 15px;font-size:15px;font-family:inherit;outline:none">
+      <button class="btn" id="asksend" style="width:auto;padding:0 18px">Ask</button></div>`);
+  const tx=$('#asktx',bg);
+  const bot=(html)=>{ tx.insertAdjacentHTML('beforeend',`<div class="askmsg bot">${html}</div>`); tx.scrollTop=tx.scrollHeight; };
+  const me=(t)=>{ tx.insertAdjacentHTML('beforeend',`<div class="askmsg user">${escapeHtml(t)}</div>`); tx.scrollTop=tx.scrollHeight; };
+  bot("Hi! I can check your <b>balance</b>, show your <b>spending</b>, <b>send money</b> (“send 20 to Makeda”), or list <b>recent activity</b>.");
+  const go=async()=>{ const i=$('#askin',bg); const t=i.value.trim(); if(!t)return; i.value=''; me(t); await handleAsk(t,bot); };
+  $('#asksend',bg).onclick=go; $('#askin',bg).onkeydown=(e)=>{ if(e.key==='Enter') go(); };
+  bg.querySelectorAll('.ask-sug').forEach(c=>c.onclick=()=>{ $('#askin',bg).value=c.textContent; go(); });
+}
+async function handleAsk(text, bot){
+  const s=text.toLowerCase();
+  let m=s.match(/(?:send|pay|transfer)\s+\$?([\d]+(?:\.\d{1,2})?)\s+(?:to\s+)?([a-z]+)/) || s.match(/(?:send|pay)\s+([a-z]+)\s+\$?([\d]+(?:\.\d{1,2})?)/);
+  if(m){
+    let amt,name; if(/^[\d.]/.test(m[1])){ amt=m[1]; name=m[2]; } else { name=m[1]; amt=m[2]; }
+    const cents=Math.round(parseFloat(amt)*100);
+    const c=store.get().contacts.find(x=>x.name.toLowerCase().includes(name)||(x.handle||'').toLowerCase().includes(name));
+    if(!c){ bot(`I couldn't find “${escapeHtml(name)}” in your contacts.`); return; }
+    bot(`Opening a ${SYM}${store.fmt(cents)} payment to ${escapeHtml(c.name)}…`);
+    setTimeout(()=>{ closeSheet(); payToAccount(c.id, c.name, 'user', cents, c.currency); }, 350); return;
+  }
+  if(/balance|how much.*(have|left)|my money/.test(s)){ bot(`Your balance is <b>${SYM}${store.fmt(store.balance())}</b>.`); return; }
+  if(/spen[dt]|where.*money|insight|budget/.test(s)){
+    try{ const d=await api.insights(); const trend=d.spentPrevWeek?(d.spentWeek>d.spentPrevWeek?'up':'down'):'flat';
+      bot(`You've spent <b>${SYM}${store.fmt(d.spentWeek)}</b> across ${d.txnsWeek} payment(s) this week (${trend} vs last). ${d.topPayees[0]?'Top: '+escapeHtml(d.topPayees[0].n)+' '+SYM+store.fmt(d.topPayees[0].s)+'.':''} <span class="ask-link" id="moreins">See full insights →</span>`);
+      const ml=$('#moreins'); if(ml) ml.onclick=()=>{ closeSheet(); tab='insights'; render(); };
+    }catch(e){ bot("Couldn't load your spending right now."); } return;
+  }
+  if(/recent|history|transaction|last/.test(s)){
+    const t=store.get().txns.slice(0,3);
+    bot(t.length? 'Recent: '+t.map(x=>`${x.dir==='in'?'+':'−'}${SYM}${store.fmt(x.amount)} ${x.dir==='in'?'from':'to'} ${escapeHtml(x.party)}`).join('; ') : 'No recent activity yet.'); return;
+  }
+  bot("I can check your <b>balance</b>, show <b>spending</b>, <b>send money</b> (“send 20 to Makeda”), or list <b>recent activity</b>.");
+}
+
+// ---------- spending insights ----------
+const KIND_LABEL={payment:'Shops',transfer:'Sent',gift:'Gifts',bill:'Bills',cashout:'Cash out',xborder:'Cross-island'};
+async function renderInsights(){
+  let d; try{ d=await api.insights(); }catch{ d=null; }
+  if(!d){ screen(`<div class="backrow" data-back="me">‹ Me</div><p class="note">Couldn't load insights.</p>`);
+    app().querySelectorAll('[data-back]').forEach(n=>n.onclick=()=>{tab=n.dataset.back;render();}); return; }
+  const sym=d.symbol||SYM, maxK=Math.max(1,...d.byKind.map(k=>k.s));
+  const trend=d.spentPrevWeek?Math.round((d.spentWeek-d.spentPrevWeek)/d.spentPrevWeek*100):0;
+  screen(`
+    <div class="backrow" data-back="me">‹ Me</div>
+    <div class="sec" style="margin-top:6px"><h3>Spending insights</h3><span class="muted" style="margin-left:auto;font-size:12px">last 7 days</span></div>
+    <div class="statgrid" style="grid-template-columns:repeat(2,1fr)">
+      <div class="stat"><div class="sv tnum">${sym}${store.fmt(d.spentWeek)}</div><div class="sl">Spent this week</div></div>
+      <div class="stat"><div class="sv tnum">${sym}${store.fmt(d.receivedWeek)}</div><div class="sl">Received</div></div>
+      <div class="stat"><div class="sv tnum" style="color:${trend>0?'var(--coral)':'var(--ok)'}">${trend>0?'+':''}${trend}%</div><div class="sl">vs last week</div></div>
+      <div class="stat"><div class="sv tnum">${sym}${store.fmt(d.feesWeek)}</div><div class="sl">Fees paid</div></div>
+    </div>
+    <div class="sec"><h3>By category</h3></div>
+    <div class="card" style="padding:16px">${d.byKind.length? d.byKind.map(k=>`
+      <div style="margin:10px 0"><div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:5px"><span>${KIND_LABEL[k.kind]||k.kind}</span><span>${sym}${store.fmt(k.s)}</span></div>
+      <div class="bar"><div class="barfill" style="width:${Math.round(k.s/maxK*100)}%"></div></div></div>`).join('') : '<div class="s muted">No spending this week.</div>'}</div>
+    <div class="sec"><h3>Top payees</h3></div>
+    <div class="card">${d.topPayees.length? d.topPayees.map(p=>`<div class="row" style="cursor:default">${avatar(p.n,'#06384f')}<div class="m"><div class="n">${escapeHtml(p.n)}</div></div><div class="amt">${sym}${store.fmt(p.s)}</div></div>`).join('') : '<div class="row" style="cursor:default"><div class="m"><div class="s">No payees yet.</div></div></div>'}</div>
+    <p class="note">Caribe shows you exactly where your money goes — clearer than your bank.</p>`);
+  app().querySelectorAll('[data-back]').forEach(n=>n.onclick=()=>{tab=n.dataset.back;render();});
+}
+
 export async function render(){
   if(!isLoggedIn()) return renderAuth();
   if(!store.get().user){
@@ -937,6 +1013,7 @@ export async function render(){
   if(tab==='chats') return renderChats();
   if(tab==='moments') return renderMoments();
   if(tab==='store') return renderStore();
+  if(tab==='insights') return renderInsights();
   const merchant=store.get().user.accountKind==='merchant';
   if(merchant){
     if(tab==='activity') return renderActivity();

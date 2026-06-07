@@ -222,6 +222,17 @@ body{
 .stat .sv{font-size:18px;font-weight:800;letter-spacing:-.02em}
 .stat .sl{font-size:10.5px;font-weight:600;color:var(--muted);margin-top:4px}
 
+/* AI assistant + insights */
+.asktx{max-height:42vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:2px 0}
+.askmsg{max-width:86%;padding:10px 13px;border-radius:15px;font-size:14px;line-height:1.38}
+.askmsg.bot{background:var(--card-2);border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:5px}
+.askmsg.user{background:linear-gradient(135deg,var(--sea),var(--aqua));color:#fff;align-self:flex-end;border-bottom-right-radius:5px}
+.askchips{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0}
+.askchips .chip{cursor:pointer}
+.ask-link{color:var(--sea);font-weight:700;cursor:pointer}
+.bar{height:8px;background:var(--card-2);border-radius:999px;overflow:hidden;border:1px solid var(--line)}
+.barfill{height:100%;background:linear-gradient(90deg,var(--sea),var(--aqua));border-radius:999px;transition:width .4s}
+
 /* calls */
 .callicon{font-size:19px;cursor:pointer;padding:0 5px}
 .callui{position:fixed;inset:0;z-index:70;background:#06222e;display:flex;flex-direction:column;align-items:center;justify-content:center;max-width:480px;margin:0 auto;overflow:hidden}

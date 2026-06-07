@@ -196,6 +196,25 @@ export async function demo() {
   return ok({ token: issueToken(u.id), user: publicUser(userById.get(u.id)) });
 }
 
+// ---------- spending insights (real analytics on the ledger) ----------
+const OUT_KINDS = "('payment','transfer','gift','bill','cashout','xborder')";
+export async function insights(userId) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const acct = u.account_id, cur = accountById.get(acct).currency;
+  const wk = now() - 7 * 86400000, pw = now() - 14 * 86400000;
+  const thisWk = db.prepare(`SELECT COALESCE(SUM(amount_cents),0) s, COUNT(*) c FROM transactions WHERE from_account=? AND created_at>=? AND kind IN ${OUT_KINDS}`).get(acct, wk);
+  const prevWk = db.prepare(`SELECT COALESCE(SUM(amount_cents),0) s FROM transactions WHERE from_account=? AND created_at>=? AND created_at<? AND kind IN ${OUT_KINDS}`).get(acct, pw, wk).s;
+  const inWk = db.prepare(`SELECT COALESCE(SUM(amount_cents),0) s FROM transactions WHERE to_account=? AND created_at>=? AND kind!='cashin'`).get(acct, wk).s;
+  const byKind = db.prepare(`SELECT kind, COALESCE(SUM(amount_cents),0) s, COUNT(*) c FROM transactions WHERE from_account=? AND created_at>=? AND kind IN ${OUT_KINDS} GROUP BY kind ORDER BY s DESC`).all(acct, wk);
+  const topPayees = db.prepare(`SELECT at.name n, COALESCE(SUM(t.amount_cents),0) s FROM transactions t JOIN accounts at ON at.id=t.to_account WHERE t.from_account=? AND t.created_at>=? AND t.kind IN ${OUT_KINDS} GROUP BY t.to_account ORDER BY s DESC LIMIT 5`).all(acct, wk);
+  const feesWk = db.prepare(`SELECT COALESCE(SUM(fee_cents),0) s FROM transactions WHERE fee_payer=? AND created_at>=?`).get(acct, wk).s;
+  return ok({
+    balance: balanceOf(acct), currency: cur, symbol: symbolFor(cur),
+    spentWeek: thisWk.s, txnsWeek: thisWk.c, spentPrevWeek: prevWk, receivedWeek: inWk, feesWeek: feesWk,
+    byKind, topPayees,
+  });
+}
+
 // ---------- calls (WebRTC signaling) ----------
 export async function callConfig() {
   // ICE servers for the client. TURN credentials are meant to be client-visible (WebRTC);

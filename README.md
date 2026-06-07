@@ -31,6 +31,10 @@ Want a public link to text someone? `brew install cloudflared && npm run live`.
   **send-money-in-chat** tied to the wallet.
 - **Voice & video calls** — WebRTC (STUN out of the box; set `TURN_*` env for full NAT
   coverage). Audio/video, mute, camera toggle, incoming-call accept/decline.
+- **Ask Caribe** — an AI money assistant: "send 20 to Makeda", "how much did I spend?" —
+  natural language that executes real actions. (WeChat has nothing like it.)
+- **Spending insights** — real analytics on your ledger: weekly spend, trend, by category,
+  top payees, fees.
 - **Moments** — a social feed: post, like, comment.
 - **Mini-app platform** — merchant storefronts with in-app commerce (browse → buy → instant
   settlement); the foundation others build services on.

@@ -115,6 +115,7 @@ const ROUTES = [
   ['GET',  '/api/products',     (uid,b,q)=> api.products(uid, b, q), true ],
   ['POST', '/api/products/add', (uid, b) => api.productAdd(uid, b),  true ],
   ['POST', '/api/products/buy', (uid, b) => api.buyProduct(uid, b),  true ],
+  ['GET',  '/api/insights',     (uid)    => api.insights(uid),       true ],
   ['GET',  '/api/call/config',  ()       => api.callConfig(),        false],
   ['POST', '/api/call/signal',  (uid, b) => api.callSignal(uid, b),  true ],
 ];
