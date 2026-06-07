@@ -3,6 +3,7 @@ import { db, uuid, now } from './db.js';
 import { hashPin, verifyPin, issueToken } from './auth.js';
 import { rail } from './rail.js';
 import { postTransfer, balanceOf, historyFor, reconcile, LedgerError } from './ledger.js';
+import { feeFor, FEE_SCHEDULE, REVENUE_ACCOUNT } from './fees.js';
 
 // KYC tier limits (cents)
 const TIER = {
@@ -94,8 +95,11 @@ export async function transactions(userId) {
 
 export async function health() {
   const problems = reconcile();
-  return ok({ ok: problems.length === 0, ledgerSound: problems.length === 0, problems });
+  return ok({ ok: problems.length === 0, ledgerSound: problems.length === 0, problems,
+    revenueCents: balanceOf(REVENUE_ACCOUNT) });
 }
+
+export async function fees() { return ok({ schedule: FEE_SCHEDULE }); }
 
 // ---------- money ----------
 function enforceSendLimit(u, amountCents) {
@@ -114,8 +118,13 @@ async function move(userId, { toId, amountCents, memo, kind, idempotencyKey }) {
   const limited = enforceSendLimit(u, amountCents);
   if (limited) return limited;
   try {
-    const txn = postTransfer({ fromId: u.account_id, toId, amountCents, kind, memo, idempotencyKey, railRef: 'SD-TX-' + uuid().slice(0,8).toUpperCase() });
-    return ok({ txn: { id: txn.id, ref: txn.rail_ref, amount: txn.amount_cents }, balance: balanceOf(u.account_id) });
+    const fee = feeFor(kind, amountCents);
+    const feePayer = fee.payer === 'recipient' ? toId : u.account_id;
+    const txn = postTransfer({ fromId: u.account_id, toId, amountCents, kind, memo, idempotencyKey,
+      railRef: 'SD-TX-' + uuid().slice(0,8).toUpperCase(),
+      feeCents: fee.cents, feePayer, feeAccount: REVENUE_ACCOUNT });
+    return ok({ txn: { id: txn.id, ref: txn.rail_ref, amount: txn.amount_cents },
+      fee: fee.cents, feePayer: fee.payer, balance: balanceOf(u.account_id) });
   } catch (e) {
     if (e instanceof LedgerError) {
       if (e.code === 'INSUFFICIENT_FUNDS') return err(402, 'insufficient_funds', 'Not enough balance');
@@ -140,8 +149,10 @@ export async function cashin(userId, { amountCents, idempotencyKey }) {
   // Bridge external Sand Dollar funds in, then credit the wallet from treasury (real double-entry).
   const r = await rail.cashIn(u.rail_account_id, amountCents);
   if (!r.ok) return err(502, 'rail_error', 'Sand Dollar cash-in failed');
-  const txn = postTransfer({ fromId: 'treasury', toId: u.account_id, amountCents, kind: 'cashin', memo: 'Cash in · Sand Dollar', railRef: r.ref, idempotencyKey });
-  return ok({ txn: { id: txn.id, ref: txn.rail_ref }, balance: balanceOf(u.account_id) });
+  const fee = feeFor('cashin', amountCents);
+  const txn = postTransfer({ fromId: 'treasury', toId: u.account_id, amountCents, kind: 'cashin', memo: 'Cash in · Sand Dollar', railRef: r.ref, idempotencyKey,
+    feeCents: fee.cents, feePayer: u.account_id, feeAccount: REVENUE_ACCOUNT });
+  return ok({ txn: { id: txn.id, ref: txn.rail_ref }, fee: fee.cents, balance: balanceOf(u.account_id) });
 }
 
 export async function cashout(userId, { amountCents, idempotencyKey }) {
@@ -149,10 +160,12 @@ export async function cashout(userId, { amountCents, idempotencyKey }) {
   if (!u) return err(401, 'no_user');
   if (!Number.isInteger(amountCents) || amountCents <= 0) return err(400, 'bad_amount');
   try {
-    const txn = postTransfer({ fromId: u.account_id, toId: 'treasury', amountCents, kind: 'cashout', memo: 'Cash out · Sand Dollar', idempotencyKey });
+    const fee = feeFor('cashout', amountCents);
+    const txn = postTransfer({ fromId: u.account_id, toId: 'treasury', amountCents, kind: 'cashout', memo: 'Cash out · Sand Dollar', idempotencyKey,
+      feeCents: fee.cents, feePayer: u.account_id, feeAccount: REVENUE_ACCOUNT });
     const r = await rail.cashOut(u.rail_account_id, amountCents);
     if (!r.ok) throw new Error('rail cashout failed');
-    return ok({ txn: { id: txn.id, ref: txn.rail_ref }, balance: balanceOf(u.account_id) });
+    return ok({ txn: { id: txn.id, ref: txn.rail_ref }, fee: fee.cents, balance: balanceOf(u.account_id) });
   } catch (e) {
     if (e instanceof LedgerError && e.code === 'INSUFFICIENT_FUNDS') return err(402, 'insufficient_funds', 'Not enough balance');
     throw e;

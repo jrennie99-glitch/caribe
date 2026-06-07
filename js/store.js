@@ -1,17 +1,18 @@
 // store.js (client) — in-memory cache populated from the real backend.
 import { api } from './api.js';
 
-let state = { user: null, contacts: [], merchants: [], billers: [], txns: [] };
+let state = { user: null, contacts: [], merchants: [], billers: [], txns: [], fees: {} };
 
 export const get = () => state;
 export const balance = () => state.user?.balance ?? 0;
 export const fmt = (cents) => ((cents||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 
 export async function loadAll() {
-  const [{ user }, dir, tx] = await Promise.all([api.me(), api.directory(), api.transactions()]);
+  const [{ user }, dir, tx, f] = await Promise.all([api.me(), api.directory(), api.transactions(), api.fees()]);
   state.user = user;
   state.contacts = dir.contacts; state.merchants = dir.merchants; state.billers = dir.billers;
   state.txns = tx.transactions;
+  state.fees = f.schedule || {};
   if (typeof tx.balance === 'number') state.user.balance = tx.balance;
   return state;
 }
@@ -25,4 +26,4 @@ export async function refresh() {
 }
 
 export function setUser(u) { state.user = u; }
-export function clear() { state = { user: null, contacts: [], merchants: [], billers: [], txns: [] }; }
+export function clear() { state = { user: null, contacts: [], merchants: [], billers: [], txns: [], fees: {} }; }

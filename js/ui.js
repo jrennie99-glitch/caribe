@@ -27,6 +27,12 @@ function countUp(el, to){
   (function tick(now){ const p=Math.min(1,(now-t0)/dur);
     el.textContent=store.fmt(Math.round(to*ease(p))); if(p<1) requestAnimationFrame(tick); })(t0);
 }
+// mirror of server fee math, for showing a live preview before the user confirms
+function clientFee(kind, cents){
+  const r=(store.get().fees||{})[kind]||{bps:0,flat:0,payer:'sender'};
+  if(cents<=0) return {cents:0,payer:r.payer};
+  return {cents:Math.max(0,Math.floor(cents*r.bps/10000)+r.flat),payer:r.payer};
+}
 
 let tab = 'home';
 let authMode = 'register';
@@ -148,7 +154,7 @@ function renderHome(){
   const s=store.get();
   const recent=s.txns.slice(0,5).map(t=>`
     <div class="row">${avatar(t.party,t.dir==='in'?'#1fb87a':'#06384f')}
-      <div class="m"><div class="n">${t.party}</div><div class="s">${timeAgo(t.ts)}${t.memo?' · '+t.memo:''}</div></div>
+      <div class="m"><div class="n">${t.party}</div><div class="s">${timeAgo(t.ts)}${t.memo?' · '+t.memo:''}${t.fee?' · fee '+SYM+store.fmt(t.fee):''}</div></div>
       <div class="amt ${t.dir==='in'?'pos':'neg'}">${t.dir==='in'?'+':'−'}${SYM}${store.fmt(t.amount)}</div></div>`).join('')
     || `<div class="row" style="cursor:default"><div class="m"><div class="s">No activity yet — cash in to get started.</div></div></div>`;
   screen(`
@@ -212,7 +218,7 @@ function runMini(id){
   amountEntry(`Pay ${biller.name}`, id==='topup'?'Aliv / BTC prepaid credit':'Enter amount due', 'Pay', async(cents)=>{
     await doMoney(()=>api.bill({billerId, amountCents:cents, idempotencyKey:newKey()}),
       'Paid', `${SYM}${store.fmt(cents)} to ${biller.name}`);
-  });
+  },{feeKind:'bill'});
 }
 
 // ============================================================
@@ -223,7 +229,7 @@ function renderActivity(){
   screen(`<div class="sec" style="margin-top:18px"><h3>All activity</h3>
       <span class="muted" style="margin-left:auto;font-size:12px">${s.txns.length} transactions</span></div>
     <div class="card">${s.txns.length? s.txns.map(t=>`<div class="row">${avatar(t.party,t.dir==='in'?'#1fb87a':'#06384f')}
-      <div class="m"><div class="n">${t.party}</div><div class="s">${new Date(t.ts).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})} · ${t.ref}</div></div>
+      <div class="m"><div class="n">${t.party}</div><div class="s">${new Date(t.ts).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}${t.fee?' · fee '+SYM+store.fmt(t.fee):''}</div></div>
       <div class="amt ${t.dir==='in'?'pos':'neg'}">${t.dir==='in'?'+':'−'}${SYM}${store.fmt(t.amount)}</div></div>`).join('')
       :`<div class="row" style="cursor:default"><div class="m"><div class="s">No transactions yet.</div></div></div>`}</div>`);
 }
@@ -266,16 +272,26 @@ function amountEntry(title,sub,cta,onConfirm,opts={}){
   const bg=openSheet(`
     <h2>${title}</h2><p class="lead">${sub}</p>
     <div class="amount-big"><small>${SYM}</small><span id="amt">0.00</span></div>
+    <div class="feeline" id="feeline">&nbsp;</div>
     ${opts.envelope?`<label class="center" style="display:flex;gap:8px;justify-content:center;align-items:center;font-size:13px;color:var(--muted);margin:4px 0 8px">
       <input type="checkbox" id="env"> 🧧 Send as a gift envelope</label>`:''}
     <div class="field" style="margin-top:0"><input id="memo" placeholder="${opts.memoPh||'Add a note (optional)'}"></div>
     <div class="keys">${['1','2','3','4','5','6','7','8','9','.','0','⌫'].map(k=>`<div class="key" data-k="${k}">${k}</div>`).join('')}</div>
     <button class="btn ${opts.coral?'coral':''}" id="go" disabled>${cta}</button>`);
   const go=$('#go',bg), amt=$('#amt',bg);
+  const updFee=()=>{
+    if(!opts.feeKind) return; const el=$('#feeline',bg); if(!el) return;
+    if(cents<=0){ el.innerHTML='&nbsp;'; return; }
+    const f=clientFee(opts.feeKind,cents);
+    if(f.cents<=0){ el.textContent='No fee'; return; }
+    el.innerHTML = f.payer==='recipient'
+      ? `Caribe fee ${SYM}${store.fmt(f.cents)} · they receive ${SYM}${store.fmt(Math.max(0,cents-f.cents))}`
+      : `Caribe fee ${SYM}${store.fmt(f.cents)} · total ${SYM}${store.fmt(cents+f.cents)}`;
+  };
   bg.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{
     const k=b.dataset.k;
     if(k==='⌫')cents=Math.floor(cents/10); else if(k==='.'){} else cents=cents*10+parseInt(k,10);
-    if(cents>99999999)cents=99999999; amt.textContent=store.fmt(cents); go.disabled=cents<=0;
+    if(cents>99999999)cents=99999999; amt.textContent=store.fmt(cents); go.disabled=cents<=0; updFee();
   });
   go.onclick=()=>onConfirm(cents,$('#memo',bg).value.trim(),$('#env',bg)?.checked,go);
 }
@@ -293,14 +309,14 @@ function sendTo(contactId){
     await doMoney(()=>api.transfer({toId:contactId,amountCents:cents,memo,envelope:!!env,idempotencyKey:newKey()}),
       env?'🧧 Envelope sent!':'Sent',
       `${SYM}${store.fmt(cents)} to ${c.name}${memo?` · "${memo}"`:''}`);
-  },{envelope:true,memoPh:'lunch, rent, happy birthday…'});
+  },{envelope:true,memoPh:'lunch, rent, happy birthday…',feeKind:'transfer'});
 }
 function payMerchant(mId){
   const m=store.get().merchants.find(x=>x.id===mId); if(!m)return;
   amountEntry(`Pay ${m.name}`,`${m.category||''} · Sand Dollar`,'Pay now',async(cents,memo)=>{
     await doMoney(()=>api.pay({toId:mId,amountCents:cents,memo,idempotencyKey:newKey()}),
       'Paid',`${SYM}${store.fmt(cents)} to ${m.name}`);
-  });
+  },{feeKind:'payment'});
 }
 function scan(){
   const s=store.get();
@@ -324,13 +340,13 @@ function cashIn(){
   amountEntry('Cash in','Top up from your bank / agent','Add money',async(cents)=>{
     await doMoney(()=>api.cashin({amountCents:cents,idempotencyKey:newKey()}),
       'Topped up',`${SYM}${store.fmt(cents)} added to your wallet`);
-  });
+  },{feeKind:'cashin'});
 }
 function cashOut(){
   amountEntry('Cash out','Withdraw to Sand Dollar','Withdraw',async(cents)=>{
     await doMoney(()=>api.cashout({amountCents:cents,idempotencyKey:newKey()}),
       'Withdrawn',`${SYM}${store.fmt(cents)} sent to your Sand Dollar account`);
-  });
+  },{feeKind:'cashout'});
 }
 
 // ============================================================

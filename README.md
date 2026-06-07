@@ -51,6 +51,27 @@ Reset all data: `npm run reset`
 - full UI flow: login → send B$5.00 → DB balance 37655 → 37155 (exact)
 - ledger reconciles: `ledgerSound: true`
 
+## Revenue model (fees)
+
+Every transaction can carry a fee that lands in the **Caribe revenue account**
+(`app_revenue`), collected via real double-entry in the *same atomic transaction* as the
+payment — you never get a payment without its fee, or a fee without its payment.
+
+All pricing lives in one file: `server/fees.js`. Defaults:
+
+| Action | Fee | Who pays |
+|--------|-----|----------|
+| Send (P2P) | 0.5% | sender (pays amount + fee) |
+| Gift envelope | 0.5% | sender |
+| Pay a merchant | 1.5% | merchant absorbs it (customer pays exact amount) |
+| Pay a bill | 1% | sender |
+| Cash in | free | — (funding is free to drive adoption) |
+| Cash out | 1% + B$0.25 | sender |
+
+Change any number in `FEE_SCHEDULE` to reprice. Want a fee on cash-in too? Set its `bps`.
+The fee is shown to the user in the keypad *before* they confirm (e.g. "Caribe fee B$0.50
+· total B$100.50"). `GET /api/health` reports total revenue collected (`revenueCents`).
+
 ## Architecture
 
 ```
@@ -59,6 +80,7 @@ server/
   db.js      ← SQLite schema + seed (node:sqlite, zero deps)
   auth.js    ← scrypt PIN hashing + HMAC tokens
   ledger.js  ← double-entry accounting (atomic, idempotent, reconcilable)
+  fees.js    ← revenue model: fee schedule per transaction type
   api.js     ← request handlers + KYC limits
   rail.js    ← THE SAND DOLLAR SEAM  ← swap mock → real CBDC here, one file
 js/

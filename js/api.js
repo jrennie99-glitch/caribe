@@ -37,4 +37,5 @@ export const api = {
   cashin:   (b) => request('POST', '/cashin', b),
   cashout:  (b) => request('POST', '/cashout', b),
   health:   ()  => request('GET',  '/health'),
+  fees:     ()  => request('GET',  '/fees'),
 };

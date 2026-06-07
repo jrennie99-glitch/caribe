@@ -12,26 +12,34 @@ export class LedgerError extends Error {
 
 const getAccount = db.prepare(`SELECT * FROM accounts WHERE id = ?`);
 const insTxn = db.prepare(
-  `INSERT INTO transactions (id,idempotency_key,from_account,to_account,amount_cents,kind,memo,rail_ref,created_at)
-   VALUES (?,?,?,?,?,?,?,?,?)`);
+  `INSERT INTO transactions (id,idempotency_key,from_account,to_account,amount_cents,kind,memo,rail_ref,fee_cents,fee_account,fee_payer,created_at)
+   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
 const insEntry = db.prepare(
   `INSERT INTO ledger_entries (id,txn_id,account_id,direction,amount_cents,created_at) VALUES (?,?,?,?,?,?)`);
 const updBal = db.prepare(`UPDATE accounts SET balance_cents = balance_cents + ? WHERE id = ?`);
 const findByKey = db.prepare(`SELECT * FROM transactions WHERE idempotency_key = ?`);
 
 /**
- * Post a transfer between two accounts.
- * @returns {object} the transaction row
- * @throws  {LedgerError} BAD_AMOUNT | NO_SUCH_ACCOUNT | INSUFFICIENT_FUNDS
+ * Post a transfer between two accounts, optionally collecting a fee to a revenue account.
+ * The principal AND the fee move inside ONE atomic transaction — you never get one
+ * without the other.
+ *
+ * @param feeCents   fee amount (0 = none)
+ * @param feePayer   account id that pays the fee (the sender, or the recipient for
+ *                   merchant "discount rate" pricing)
+ * @param feeAccount revenue account that receives the fee
+ * @throws {LedgerError} BAD_AMOUNT | NO_SUCH_ACCOUNT | INSUFFICIENT_FUNDS
  */
-export function postTransfer({ fromId, toId, amountCents, kind = 'transfer', memo = null, railRef = null, idempotencyKey = null }) {
+export function postTransfer({ fromId, toId, amountCents, kind = 'transfer', memo = null, railRef = null,
+                               idempotencyKey = null, feeCents = 0, feePayer = null, feeAccount = null }) {
   if (!Number.isInteger(amountCents) || amountCents <= 0) throw new LedgerError('BAD_AMOUNT', 'Amount must be a positive integer (cents)');
   if (fromId === toId) throw new LedgerError('BAD_AMOUNT', 'Cannot transfer to the same account');
+  if (!Number.isInteger(feeCents) || feeCents < 0) feeCents = 0;
+  const hasFee = feeCents > 0 && feePayer && feeAccount;
 
-  // Idempotency: a repeated key returns the original txn, never double-charges.
   if (idempotencyKey) {
     const existing = findByKey.get(idempotencyKey);
-    if (existing) return existing;
+    if (existing) return existing;   // never double-charge a retry
   }
 
   db.exec('BEGIN IMMEDIATE');
@@ -40,17 +48,33 @@ export function postTransfer({ fromId, toId, amountCents, kind = 'transfer', mem
     const to = getAccount.get(toId);
     if (!from) throw new LedgerError('NO_SUCH_ACCOUNT', 'Sender account not found');
     if (!to) throw new LedgerError('NO_SUCH_ACCOUNT', 'Recipient account not found');
-    if (!from.allow_negative && from.balance_cents < amountCents) {
+
+    // Overdraft check accounts for the fee when the SENDER pays it.
+    const senderNeeds = amountCents + (hasFee && feePayer === fromId ? feeCents : 0);
+    if (!from.allow_negative && from.balance_cents < senderNeeds) {
       throw new LedgerError('INSUFFICIENT_FUNDS', 'Not enough balance');
+    }
+    // When the RECIPIENT pays the fee, ensure they net non-negative after receiving funds.
+    if (hasFee && feePayer === toId && !to.allow_negative && (to.balance_cents + amountCents - feeCents) < 0) {
+      throw new LedgerError('INSUFFICIENT_FUNDS', 'Recipient cannot cover the fee');
     }
 
     const t = now();
     const txnId = uuid();
-    insTxn.run(txnId, idempotencyKey, fromId, toId, amountCents, kind, memo, railRef, t);
+    insTxn.run(txnId, idempotencyKey, fromId, toId, amountCents, kind, memo, railRef,
+               hasFee ? feeCents : 0, hasFee ? feeAccount : null, hasFee ? feePayer : null, t);
+    // principal leg
     insEntry.run(uuid(), txnId, fromId, 'debit', amountCents, t);
     insEntry.run(uuid(), txnId, toId, 'credit', amountCents, t);
     updBal.run(-amountCents, fromId);
     updBal.run(amountCents, toId);
+    // fee leg (same txn) — payer → revenue
+    if (hasFee) {
+      insEntry.run(uuid(), txnId, feePayer, 'debit', feeCents, t);
+      insEntry.run(uuid(), txnId, feeAccount, 'credit', feeCents, t);
+      updBal.run(-feeCents, feePayer);
+      updBal.run(feeCents, feeAccount);
+    }
 
     db.exec('COMMIT');
     return getTxn(txnId);
@@ -82,6 +106,8 @@ export function historyFor(accountId, limit = 100) {
       memo: r.memo,
       ref: r.rail_ref || r.id,
       kind: r.kind,
+      // show the fee only to whoever actually paid it
+      fee: (r.fee_cents > 0 && r.fee_payer === accountId) ? r.fee_cents : 0,
       ts: r.created_at,
     };
   });
