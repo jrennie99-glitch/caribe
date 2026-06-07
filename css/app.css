@@ -222,6 +222,30 @@ body{
 .stat .sv{font-size:18px;font-weight:800;letter-spacing:-.02em}
 .stat .sl{font-size:10.5px;font-weight:600;color:var(--muted);margin-top:4px}
 
+/* chat */
+.chatback{font-size:32px;color:#fff;cursor:pointer;line-height:1;padding-right:8px;margin-top:-3px;font-weight:300}
+.chatscroll{display:flex;flex-direction:column;gap:7px;padding:16px 14px 86px}
+.bub{display:flex}
+.bub.me{justify-content:flex-end}
+.bub .msg{max-width:78%;padding:10px 13px;border-radius:17px;font-size:14.5px;line-height:1.35;overflow-wrap:anywhere;white-space:pre-wrap}
+.bub.me .msg{background:linear-gradient(135deg,var(--sea),var(--aqua));color:#fff;border-bottom-right-radius:5px;box-shadow:var(--sh-1)}
+.bub.them .msg{background:#fff;border:1px solid var(--line);color:var(--ink);border-bottom-left-radius:5px}
+.paybub{padding:13px 20px;border-radius:17px;font-weight:800;font-size:19px;text-align:center;color:#fff;
+  background:linear-gradient(135deg,var(--coral),#ff8a7e);box-shadow:var(--sh-2)}
+.bub.them .paybub{background:linear-gradient(135deg,var(--gold),#ffce7a);color:var(--ocean)}
+.paysub{font-size:10.5px;font-weight:700;opacity:.92;margin-top:3px;letter-spacing:.02em}
+.syswrap{text-align:center;margin:4px 0}
+.sysmsg{font-size:11px;color:var(--muted);background:var(--card-2);padding:4px 10px;border-radius:999px}
+.chatbar{position:fixed;bottom:0;left:0;right:0;max-width:480px;margin:0 auto;display:flex;gap:8px;align-items:center;
+  padding:10px 12px calc(10px + var(--safe-b));background:rgba(255,255,255,.92);backdrop-filter:blur(14px);border-top:1px solid var(--line);z-index:20}
+.chatbar input{flex:1;border:1.5px solid var(--line);border-radius:999px;padding:11px 16px;font-size:15px;outline:none;font-family:inherit;background:#fff}
+.chatbar input:focus{border-color:var(--sea)}
+.chatsend,.chatmoney{border:none;width:42px;height:42px;border-radius:50%;cursor:pointer;flex:0 0 auto;display:flex;align-items:center;justify-content:center}
+.chatsend{background:linear-gradient(135deg,var(--sea),var(--aqua));color:#fff}
+.chatsend svg{width:20px;height:20px}
+.chatmoney{background:var(--sand);font-size:18px}
+.unread{display:inline-block;background:var(--coral);color:#fff;font-size:11px;font-weight:700;min-width:18px;height:18px;border-radius:9px;text-align:center;line-height:18px;padding:0 5px}
+
 /* guided tutorial (coachmarks) */
 .coach-overlay{position:fixed;inset:0;background:rgba(6,28,38,.74);z-index:60}
 .spot{position:fixed;border-radius:16px;box-shadow:0 0 0 9999px rgba(6,28,38,.74);z-index:60;pointer-events:none;

@@ -27,6 +27,8 @@ Want a public link to text someone? `brew install cloudflared && npm run live`.
 
 ## What it does (all real, no mocks)
 
+- **Messaging** — real-time 1:1 + group chat (Server-Sent Events, no polling), with
+  **send-money-in-chat** tied to the wallet.
 - **Wallet** on a real double-entry ledger — every cent is backed (provable, see below).
 - **Send / pay / bills / gift envelopes / Scan & Pay** (real QR + camera scanning).
 - **Cross-island transfers** — send from a Bahamas wallet to a Jamaica wallet; currency

@@ -109,6 +109,18 @@ function migrate() {
     id TEXT PRIMARY KEY, account_id TEXT NOT NULL, rail_account_id TEXT,
     kind TEXT NOT NULL, amount_cents INTEGER NOT NULL, ref TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'settled', created_at INTEGER NOT NULL)`);
+  // Messaging
+  db.exec(`CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT, created_at INTEGER NOT NULL)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS conversation_members (
+    conversation_id TEXT NOT NULL, account_id TEXT NOT NULL, last_read_ts INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (conversation_id, account_id))`);
+  db.exec(`CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, sender_account TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'text', body TEXT, txn_id TEXT, amount_cents INTEGER,
+    created_at INTEGER NOT NULL)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, created_at)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_cm_acct ON conversation_members(account_id)`);
 }
 migrate();
 

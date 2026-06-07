@@ -7,6 +7,7 @@ import { config, isProd } from './config.js';
 import { db, seed } from './db.js';
 import { verifyToken, adminKey } from './auth.js';
 import { rail } from './rail.js';
+import * as chat from './chat.js';
 import * as api from './api.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -100,7 +101,27 @@ const ROUTES = [
   ['POST', '/api/bill',         (uid, b) => api.bill(uid, b),      true ],
   ['POST', '/api/cashin',       (uid, b) => api.cashin(uid, b),    true ],
   ['POST', '/api/cashout',      (uid, b) => api.cashout(uid, b),   true ],
+  ['POST', '/api/chat/start',   (uid, b) => api.chatStart(uid, b), true ],
+  ['POST', '/api/chat/group',   (uid, b) => api.chatGroup(uid, b), true ],
+  ['GET',  '/api/chat/list',    (uid)    => api.chatList(uid),     true ],
+  ['GET',  '/api/chat/messages',(uid,b,q)=> api.chatMessages(uid, b, q), true ],
+  ['POST', '/api/chat/send',    (uid, b) => api.chatSend(uid, b),  true ],
+  ['POST', '/api/chat/read',    (uid, b) => api.chatRead(uid, b),  true ],
+  ['POST', '/api/chat/money',   (uid, b) => api.chatSendMoney(uid, b), true ],
 ];
+
+// Server-Sent Events: real-time message delivery. EventSource can't set headers, so the
+// token comes as ?token= (over HTTPS in production).
+function handleStream(req, res, url) {
+  const uid = verifyToken(url.searchParams.get('token') || '');
+  const acct = uid && db.prepare('SELECT account_id FROM users WHERE id=?').get(uid)?.account_id;
+  if (!acct) { res.writeHead(401); return res.end(); }
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'connection': 'keep-alive', 'x-accel-buffering': 'no' });
+  res.write('retry: 3000\n\n');
+  chat.subscribe(acct, res);
+  const ka = setInterval(() => { try { res.write(': ka\n\n'); } catch {} }, 25000);
+  req.on('close', () => { clearInterval(ka); chat.unsubscribe(acct, res); });
+}
 
 async function handleApi(req, res, url, ip) {
   const path = url.pathname;
@@ -157,6 +178,7 @@ const server = http.createServer(async (req, res) => {
   });
 
   if (url.pathname === '/healthz') return send(res, 200, { ok: true });
+  if (url.pathname === '/api/chat/stream') return handleStream(req, res, url);
   if (url.pathname.startsWith('/api/')) return handleApi(req, res, url, ip);
   return handleStatic(req, res, url);
 });

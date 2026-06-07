@@ -1,5 +1,5 @@
 // ui.js — all screens + interactions, backed by the real Caribe API.
-import { api, isLoggedIn, setToken, clearToken, newKey } from './api.js';
+import { api, isLoggedIn, setToken, clearToken, newKey, chatStreamUrl } from './api.js';
 import * as store from './store.js';
 
 const $ = (sel, r=document) => r.querySelector(sel);
@@ -19,6 +19,7 @@ const ICONS = {
   user:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>`,
   check:`<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg>`,
   chev:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`,
+  chat:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.5 7.2L4 20l1-4.3A8 8 0 1 1 21 12Z"/></svg>`,
 };
 const icon = (n) => ICONS[n] || '';
 
@@ -456,7 +457,7 @@ function renderMe(){
     </div>
     <div class="pad"><button class="btn ghost" id="logout">Log out</button></div>
     <p class="note">Caribe · real backend, real ledger. Balances live in SQLite on the server, not on this device.</p>`);
-  $('#logout').onclick=()=>{clearToken();store.clear();tab='home';render();};
+  $('#logout').onclick=()=>{disconnectStream();clearToken();store.clear();openConv=null;tab='home';render();};
   const co=app().querySelector('[data-cashout]'); if(co) co.onclick=()=>cashOut();
   const kc=app().querySelector('[data-kyc]'); if(kc) kc.onclick=()=>kycUpload();
   const tt=app().querySelector('[data-tutorial]'); if(tt) tt.onclick=()=>startTutorial();
@@ -615,16 +616,16 @@ function navbar(){
   const merchant=store.get().user?.accountKind==='merchant';
   const t=(id,ic,label)=>`<div class="tab ${tab===id?'active':''}" data-go="${id}"><span class="ic">${icon(ic)}</span>${label}</div>`;
   if(merchant){
-    return `<div class="nav">${t('home','wallet','Home')}${t('activity','receipt','Sales')}
+    return `<div class="nav">${t('home','wallet','Home')}${t('chats','chat','Chats')}
       <div class="scanbtn" data-charge="1"><div class="b">${icon('plus')}</div></div>
-      ${t('me','user','Me')}<div class="tab" style="visibility:hidden"><span class="ic">${icon('user')}</span>·</div></div>`;
+      ${t('activity','receipt','Sales')}${t('me','user','Me')}</div>`;
   }
-  return `<div class="nav">${t('home','wallet','Wallet')}${t('discover','compass','Discover')}
+  return `<div class="nav">${t('chats','chat','Chats')}${t('home','wallet','Wallet')}
     <div class="scanbtn" data-scan="1"><div class="b">${icon('scan')}</div></div>
-    ${t('activity','receipt','Activity')}${t('me','user','Me')}</div>`;
+    ${t('discover','compass','Discover')}${t('me','user','Me')}</div>`;
 }
 function bindNav(){
-  app().querySelectorAll('[data-go]').forEach(n=>n.onclick=()=>{tab=n.dataset.go;render();});
+  app().querySelectorAll('[data-go]').forEach(n=>n.onclick=()=>{ openConv=null; tab=n.dataset.go; render(); });
   const sc=app().querySelector('[data-scan]'); if(sc) sc.onclick=()=>scan();
   const ch=app().querySelector('[data-charge]'); if(ch) ch.onclick=()=>chargeFlow();
 }
@@ -681,6 +682,98 @@ function startTutorial(){
   show();
 }
 
+// ---------- chat (real-time messaging) ----------
+let openConv=null, convCache={}, es=null;
+const escapeHtml=(s)=>(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function connectStream(){
+  if(es || !isLoggedIn()) return;
+  try{
+    es=new EventSource(chatStreamUrl());
+    es.onmessage=(e)=>{ try{ const d=JSON.parse(e.data); if(d.type==='message') onIncoming(d); }catch{} };
+    es.onerror=()=>{}; // EventSource auto-reconnects
+  }catch{}
+}
+function disconnectStream(){ if(es){ try{es.close();}catch{} es=null; } }
+function onIncoming(d){
+  if(tab==='chats' && openConv===d.conversationId){ appendMessage(d.message); api.chatRead({conversationId:openConv}).catch(()=>{}); }
+  else if(tab==='chats' && !openConv){ renderChats(); }
+}
+
+function lastPreview(m){
+  if(!m) return 'No messages yet';
+  const mine=m.senderAccount===store.get().user.accountId;
+  if(m.kind==='payment') return '💸 '+SYM+store.fmt(m.amount);
+  if(m.kind==='system') return m.body||'';
+  return (mine?'You: ':'')+(m.body||'');
+}
+async function renderChats(){
+  if(openConv) return renderConversation(openConv);
+  let convs=[];
+  try{ convs=(await api.chatList()).conversations; convs.forEach(c=>convCache[c.id]=c); }catch(e){}
+  screen(`
+    <div class="sec" style="margin-top:18px"><h3>Chats</h3><span class="link" id="newchat">＋ New</span></div>
+    <div class="card">${convs.length? convs.map(c=>`<div class="row" data-conv="${c.id}">
+      <div class="av" style="background:${c.color}">${c.kind==='group'?'👥':initials(c.title)}</div>
+      <div class="m"><div class="n">${c.title}</div><div class="s">${escapeHtml(lastPreview(c.last)).slice(0,42)}</div></div>
+      <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        <div class="s">${c.lastTs?timeAgo(c.lastTs):''}</div>${c.unread?`<span class="unread">${c.unread}</span>`:''}</div></div>`).join('')
+      : `<div class="row" style="cursor:default"><div class="m"><div class="s">No chats yet. Tap “＋ New” to message someone.</div></div></div>`}</div>
+    <p class="note">Messages deliver in real time. Tap 💵 inside a chat to send money.</p>`);
+  $('#newchat').onclick=newChatPicker;
+  app().querySelectorAll('[data-conv]').forEach(n=>n.onclick=()=>{ openConv=n.dataset.conv; render(); });
+}
+function newChatPicker(){
+  const s=store.get();
+  openSheet(`<h2>New chat</h2><p class="lead">Message someone</p>
+    <div style="max-height:55vh;overflow:auto">${s.contacts.length? s.contacts.map(c=>`<div class="row" data-nc="${c.id}">${avatar(c.name,c.color)}
+      <div class="m"><div class="n">${c.name}</div><div class="s">${c.handle||''}${(c.currency&&c.currency!==s.user.currency)?' · 🌎 '+c.island:''}</div></div></div>`).join('')
+      : '<p class="note">No contacts yet — have someone register.</p>'}</div>`);
+  document.querySelectorAll('[data-nc]').forEach(n=>n.onclick=async()=>{
+    try{ const r=await api.chatStart({peerAccountId:n.dataset.nc}); closeSheet(); openConv=r.conversationId; render(); }catch(e){ toast('Could not start chat'); }
+  });
+}
+function bubble(m){
+  const mine=m.senderAccount===store.get().user.accountId;
+  if(m.kind==='system') return `<div class="syswrap"><span class="sysmsg">${escapeHtml(m.body)}</span></div>`;
+  if(m.kind==='payment') return `<div class="bub ${mine?'me':'them'}" data-mid="${m.id}"><div class="paybub">💸 ${SYM}${store.fmt(m.amount)}<div class="paysub">${mine?'You sent':'Received'}</div></div></div>`;
+  return `<div class="bub ${mine?'me':'them'}" data-mid="${m.id}"><div class="msg">${escapeHtml(m.body)}</div></div>`;
+}
+function appendMessage(m){
+  const c=document.getElementById('msgs'); if(!c) return;
+  if(c.querySelector(`[data-mid="${m.id}"]`)) return; // dedup (SSE echoes our own sends)
+  c.insertAdjacentHTML('beforeend', bubble(m)); c.scrollTop=c.scrollHeight;
+}
+async function renderConversation(convId){
+  let meta=convCache[convId];
+  if(!meta){ try{ (await api.chatList()).conversations.forEach(c=>convCache[c.id]=c); meta=convCache[convId]; }catch{} }
+  meta=meta||{title:'Chat',kind:'direct',handle:''};
+  let msgs=[]; try{ msgs=(await api.chatMessages(convId,0)).messages; }catch(e){}
+  app().innerHTML=`
+    <div class="topbar"><div class="chatback" id="back">‹</div>
+      <div class="brand" style="font-size:16px">${escapeHtml(meta.title)}<small>${meta.kind==='group'?'group chat':(meta.handle||'direct')}</small></div></div>
+    <div class="screen chatscroll" id="msgs">${msgs.map(bubble).join('')}</div>
+    <div class="chatbar">
+      <button class="chatmoney" id="cmoney" title="Send money">💵</button>
+      <input id="cinput" placeholder="Message…" autocomplete="off" enterkeyhint="send">
+      <button class="chatsend" id="csend">${icon('send')}</button>
+    </div>`;
+  const box=document.getElementById('msgs'); box.scrollTop=box.scrollHeight;
+  document.getElementById('back').onclick=()=>{ openConv=null; tab='chats'; render(); };
+  const send=async()=>{ const i=document.getElementById('cinput'); const t=i.value.trim(); if(!t)return; i.value='';
+    try{ const r=await api.chatSend({conversationId:convId,text:t}); appendMessage(r.message); }catch(e){ i.value=t; } };
+  document.getElementById('csend').onclick=send;
+  document.getElementById('cinput').onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } };
+  document.getElementById('cmoney').onclick=()=>chatMoney(convId);
+  api.chatRead({conversationId:convId}).catch(()=>{});
+}
+function chatMoney(convId){
+  amountEntry('Send money in chat','Goes to this conversation','Send',async(cents)=>{
+    await doMoney(()=>api.chatMoney({conversationId:convId,amountCents:cents,idempotencyKey:newKey()}).then(r=>{ if(r&&r.message) appendMessage(r.message); return r; }),
+      'Sent', (res)=> res&&res.crossBorder?`${SYM}${store.fmt(cents)} → ${symFor(res.dstCurrency)}${store.fmt(res.dstAmount)}`:`${SYM}${store.fmt(cents)} sent in chat`);
+  },{feeKind:'transfer'});
+}
+
 export async function render(){
   if(!isLoggedIn()) return renderAuth();
   if(!store.get().user){
@@ -688,6 +781,8 @@ export async function render(){
     catch(e){ clearToken(); return renderAuth(); }
   }
   SYM = store.get().user.symbol || 'B$';
+  connectStream();
+  if(tab==='chats') return renderChats();
   const merchant=store.get().user.accountKind==='merchant';
   if(merchant){
     if(tab==='activity') return renderActivity();

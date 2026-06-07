@@ -42,4 +42,12 @@ export const api = {
   islands:  ()  => request('GET',  '/islands'),
   demo:     ()  => request('POST', '/demo'),
   kycDocument: (b) => request('POST', '/kyc/document', b),
+  chatStart:    (b) => request('POST', '/chat/start', b),
+  chatGroup:    (b) => request('POST', '/chat/group', b),
+  chatList:     ()  => request('GET',  '/chat/list'),
+  chatMessages: (convId, after = 0) => request('GET', '/chat/messages?conversationId=' + encodeURIComponent(convId) + '&after=' + after),
+  chatSend:     (b) => request('POST', '/chat/send', b),
+  chatRead:     (b) => request('POST', '/chat/read', b),
+  chatMoney:    (b) => request('POST', '/chat/money', b),
 };
+export const chatStreamUrl = () => '/api/chat/stream?token=' + encodeURIComponent(getToken() || '');

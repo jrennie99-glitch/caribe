@@ -5,6 +5,7 @@ import { rail } from './rail.js';
 import { postTransfer, postCrossBorder, balanceOf, historyFor, reconcile, summaryFor, currencyConservation, LedgerError } from './ledger.js';
 import { feeFor, FEE_SCHEDULE } from './fees.js';
 import { ISLANDS, islandByCode, symbolFor, fxConvertCents, rate, FX_SPREAD_BPS } from './islands.js';
+import * as chat from './chat.js';
 import { settlementStats } from './rail.js';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -193,6 +194,56 @@ export async function demo() {
   try { postTransfer({ fromId: makeda.account_id, toId: u.account_id, amountCents: 5000, kind: 'transfer', memo: 'lunch 🙏', feeCents: 25, feePayer: makeda.account_id, feeAccount: sysBS.revenue }); } catch {}
   try { postTransfer({ fromId: u.account_id, toId: 'm_conch', amountCents: 1850, kind: 'payment', feeCents: 18, feePayer: 'm_conch', feeAccount: sysBS.revenue }); } catch {}
   return ok({ token: issueToken(u.id), user: publicUser(userById.get(u.id)) });
+}
+
+// ---------- chat ----------
+export async function chatStart(userId, { peerAccountId } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const peer = accountById.get(peerAccountId);
+  if (!peer) return err(404, 'no_peer', 'Account not found');
+  if (peer.id === u.account_id) return err(400, 'self', 'Cannot chat with yourself');
+  return ok({ conversationId: chat.directConversation(u.account_id, peer.id) });
+}
+export async function chatGroup(userId, { title, memberIds } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const ids = (Array.isArray(memberIds) ? memberIds : []).filter(id => accountById.get(id));
+  if (!ids.length) return err(400, 'no_members', 'Pick at least one member');
+  return ok({ conversationId: chat.createGroup((title || '').trim() || 'Group', ids, u.account_id) });
+}
+export async function chatList(userId) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  return ok({ conversations: chat.listConversations(u.account_id) });
+}
+export async function chatMessages(userId, _b, query) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const convId = query && query.get('conversationId');
+  if (!convId || !chat.isMember(convId, u.account_id)) return err(403, 'not_member');
+  const after = parseInt((query && query.get('after')) || '0', 10) || 0;
+  chat.markRead(convId, u.account_id);
+  return ok({ messages: chat.messages(convId, after) });
+}
+export async function chatSend(userId, { conversationId, text } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  if (!conversationId || !chat.isMember(conversationId, u.account_id)) return err(403, 'not_member');
+  text = (text || '').toString().trim();
+  if (!text) return err(400, 'empty', 'Message is empty');
+  if (text.length > 2000) text = text.slice(0, 2000);
+  return ok({ message: chat.send(conversationId, u.account_id, { kind: 'text', body: text }) });
+}
+export async function chatRead(userId, { conversationId } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  if (conversationId && chat.isMember(conversationId, u.account_id)) chat.markRead(conversationId, u.account_id);
+  return ok({ ok: true });
+}
+export async function chatSendMoney(userId, { conversationId, amountCents, idempotencyKey } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  if (!conversationId || !chat.isMember(conversationId, u.account_id)) return err(403, 'not_member');
+  const others = chat.memberAccounts(conversationId).filter(a => a !== u.account_id);
+  if (others.length !== 1) return err(400, 'direct_only', 'Send money in direct chats only');
+  const r = await move(userId, { toId: others[0], amountCents, memo: null, kind: 'transfer', idempotencyKey });
+  if (r.status !== 200) return r;
+  const msg = chat.send(conversationId, u.account_id, { kind: 'payment', txnId: r.body.txn.id, amountCents });
+  return ok({ message: msg, balance: r.body.balance, crossBorder: r.body.crossBorder, dstAmount: r.body.dstAmount, dstCurrency: r.body.dstCurrency });
 }
 
 export async function islands() {
