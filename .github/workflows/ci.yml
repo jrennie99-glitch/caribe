@@ -20,6 +20,9 @@ jobs:
           for f in server/*.js js/*.js; do node --check "$f"; done
           echo "syntax OK"
 
+      - name: Unit + ledger tests
+        run: npm test
+
       - name: Boot + smoke test (health, ledger conservation)
         run: |
           node --no-warnings server/server.js &

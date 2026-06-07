@@ -1,136 +1,89 @@
 # Caribe 🌊
 
-**The everything app for the islands.** A WeChat-style super-app, starting in the Bahamas,
-built to run on the **Sand Dollar** (the Bahamian central bank digital currency, B$1 = US$1).
+**The everything app for the islands.** A WeChat-style super-app for the Caribbean — pay,
+send, bills, shops, and money that moves *between* islands — built as a network of nodes on
+one platform core, starting on the Bahamian **Sand Dollar**.
 
-This is **real software** — real backend, real database, real double-entry ledger, real
-authentication, real money movement that persists and works across multiple users and
-devices. Not a simulation.
+![CI](https://github.com/jrennie99-glitch/caribe/actions/workflows/ci.yml/badge.svg)
 
-The one thing that is *not* live is the connection to the actual Central Bank Sand Dollar
-network — that requires authorization and credentials only the Central Bank of The Bahamas
-issues to a licensed operator. That single boundary is isolated behind one adapter
-(`server/rail.js`). The day you have credentials, you implement one class and go live.
-Everything behind it is production-shaped.
+> **Status:** production-ready *software* (hardened, tested, deployable). Taking real
+> deposits additionally needs a money-transmitter license, live rail credentials, a KYC
+> vendor, and a reserve bank — legal/credential steps, not code. Run it as a pilot today.
 
-## Run it
+|  |  |  |
+|---|---|---|
+| ![wallet](docs/screenshots/wallet.png) | ![cross-island](docs/screenshots/cross-island.png) | ![network](docs/screenshots/network.png) |
+| Wallet | Cross-island send (live FX) | 26-island network |
+| ![merchant](docs/screenshots/merchant.png) | ![admin](docs/screenshots/admin.png) | ![tutorial](docs/screenshots/tutorial.png) |
+| Merchant dashboard | Operator console | Guided demo |
 
-No dependencies to install — the backend uses Node's built-in SQLite. Requires Node ≥ 22.5
-(built and tested on Node 25).
+## Try it in 30 seconds
 
 ```bash
-cd ~/caribe
-npm start
-# → http://localhost:8080
+git clone https://github.com/jrennie99-glitch/caribe && cd caribe
+npm start                      # → http://localhost:8080  (tap "Try the live demo")
+```
+Want a public link to text someone? `brew install cloudflared && npm run live`.
+
+## What it does (all real, no mocks)
+
+- **Wallet** on a real double-entry ledger — every cent is backed (provable, see below).
+- **Send / pay / bills / gift envelopes / Scan & Pay** (real QR + camera scanning).
+- **Cross-island transfers** — send from a Bahamas wallet to a Jamaica wallet; currency
+  converts at live FX with a transparent margin, settled atomically.
+- **Merchant app** — business onboarding, dashboard (today's net/sales/fees), QR charging.
+- **26-island network** — every Caribbean territory as a node with its own currency + rail.
+- **Revenue engine** — per-transaction fees + FX margin, with an operator **admin console**.
+- **KYC pipeline** — age/ID checks, document upload, review → tier upgrade.
+- **Demo mode + guided tutorial** for showing it off.
+
+## Why you can trust the money
+
+Every transaction is atomic double-entry; transfers are idempotent and overdraft-safe.
+A **money-conservation invariant** runs continuously: within each currency, the sum of all
+balances is exactly zero. `GET /api/health` reports it. The test suite asserts it across
+transfers, fees, and cross-island FX.
+
+```bash
+npm test     # 12 tests: ledger, fees (caps/mins), FX, auth, conservation
 ```
 
-Open it on your laptop, or on your phone at `http://<your-laptop-ip>:8080` (same wifi) and
-"Add to Home Screen" — it installs as a real app.
+## Run / deploy
 
-Reset all data: `npm run reset`
+| Goal | How |
+|------|-----|
+| Local | `npm start` |
+| Public demo link (no account) | `npm run live` (Cloudflare quick tunnel) |
+| Permanent (Docker + auto-HTTPS) | `docker compose up -d` — see [DEPLOY.md](DEPLOY.md) |
+| Permanent (Fly.io) | `fly deploy` — see [DEPLOY.md](DEPLOY.md) |
 
-## What's real and working
-
-- **Auth** — register / login, PINs hashed with scrypt, stateless signed (HMAC) tokens.
-- **Accounts & balances** — persisted in SQLite, survive restart.
-- **Double-entry ledger** — every transfer = one transaction + two ledger entries + two
-  balance updates, in one atomic SQL transaction. Overdraft-protected, idempotent
-  (safe retries), KYC daily/holding limits enforced server-side.
-- **Money** — send to people (with 🧧 gift-envelope mode), pay merchants, pay bills,
-  cash in / cash out.
-- **Real QR + camera scanning** — Receive/Request shows a real scannable QR
-  (`caribe:pay?to=…`); Scan & Pay uses the device camera via the BarcodeDetector API,
-  with a graceful saved-payee fallback where camera/format isn't supported.
-- **Merchant accounts** — register a business (separate onboarding + real KYC fields),
-  get a merchant dashboard: live balance, today's net / sales count / fees, recent
-  sales, a Request-Payment QR for any amount, and cash-out. Merchants absorb the 1% fee.
-- **Integrity** — `GET /api/health` reconciles every account (sum of ledger entries must
-  equal stored balance) and reports any mismatch.
-- **Frontend** — installable mobile PWA, reads only real server data.
-
-### Verified (automated)
-- register → cash in B$500 → send B$123.45 → balances update correctly
-- idempotent retry does **not** double-charge
-- overdraft → `insufficient_funds`, balance untouched (atomic rollback)
-- daily send limit (Tier 1 B$300/day) → `daily_limit`
-- duplicate phone, bad PIN, wrong login all rejected
-- full UI flow: login → send B$5.00 → DB balance 37655 → 37155 (exact)
-- ledger reconciles: `ledgerSound: true`
-
-## Revenue model (fees)
-
-Every transaction can carry a fee that lands in the **Caribe revenue account**
-(`app_revenue`), collected via real double-entry in the *same atomic transaction* as the
-payment — you never get a payment without its fee, or a fee without its payment.
-
-All pricing lives in one file: `server/fees.js`. Defaults:
-
-| Action | Fee | Who pays |
-|--------|-----|----------|
-| Send (P2P) | **free** | — (viral growth engine, never taxed) |
-| Gift envelope | **free** | — |
-| Pay a merchant | **1% · max B$5** | merchant absorbs it (customer pays exact amount) |
-| Pay a bill | **B$0.35 flat** | sender |
-| Cash in | **free** | — (funding is free to drive adoption) |
-| Cash out | **1% · min B$0.25 · max B$3** | sender |
-
-Strategy: M-Pesa model on a CBDC inclusion rail — keep money moving in-network cheap/free,
-earn on merchant volume + cash-out, and on float / SaaS / lending / cross-island FX later.
-Each fee is `clamp(amount*bps/10000 + flat, min, cap)`. Change any number in `FEE_SCHEDULE`
-to reprice; set a `bps` on cash-in if you ever want to charge it.
-The fee is shown to the user in the keypad *before* they confirm (e.g. "Caribe fee B$0.50
-· total B$100.50"). `GET /api/health` reports total revenue collected (`revenueCents`).
-
-## Caribbean network (multi-island)
-
-Caribe is a network of island nodes sharing one platform core. `server/islands.js` is the
-registry of every Caribbean territory (currency, symbol, FX reference rate, rail). Each
-account belongs to an island and holds its currency; each currency has its own treasury
-and revenue accounts, so every island's books balance independently.
-
-**Cross-island transfers** convert through USD at the registry rates, with a transparent
-**FX margin** (`FX_SPREAD_BPS`, default 1.5%) booked to that currency's revenue account.
-The whole thing is one atomic transaction (`ledger.postCrossBorder`): the source currency
-leg and destination currency leg both net to zero, so **per-currency conservation** always
-holds (`GET /api/health` → `conservation`).
-
-Example (verified): a Bahamas wallet sends **B$100** to a Jamaica wallet → recipient gets
-**J$15,464.50** at 1 BSD = 157 JMD, Caribe earns **J$235.50** FX margin, and both BSD and
-JMD ledgers net to exactly 0.
-
-Each island's connection to its *local* production rail (its CBDC / bank) needs that
-country's credentials — the same honest boundary as the Bahamas Sand Dollar. The network
-engine itself is real and live for all islands now. `GET /api/islands` lists them.
+No external dependencies: the backend uses Node's built-in `node:sqlite` (Node ≥ 22.5).
 
 ## Architecture
 
 ```
 server/
-  server.js  ← HTTP server (Node built-in), serves PWA + JSON API
-  db.js      ← SQLite schema + seed (node:sqlite, zero deps)
-  auth.js    ← scrypt PIN hashing + HMAC tokens
-  ledger.js  ← double-entry accounting (atomic, idempotent, reconcilable)
-  fees.js    ← revenue model: fee schedule per transaction type
-  api.js     ← request handlers + KYC limits
-  rail.js    ← THE SAND DOLLAR SEAM  ← swap mock → real CBDC here, one file
-js/
-  api.js     ← client API wrapper
-  store.js   ← client cache of server data
-  ui.js      ← screens + interactions
-  app.js     ← bootstrap + service worker
+  server.js   ← hardened HTTP server (headers, rate-limit, graceful shutdown)
+  config.js   ← env config (prod fails closed without secrets)
+  db.js       ← SQLite schema + migrations + per-currency system accounts
+  auth.js     ← scrypt PIN hashing + HMAC tokens + admin key
+  ledger.js   ← double-entry accounting, FX cross-border, conservation
+  fees.js     ← revenue schedule (one place to reprice)
+  islands.js  ← the 26-island registry (currency, FX rate, rail)
+  rail.js     ← Sand Dollar adapter (settlement engine ↔ live CBDC, one swap)
+  api.js      ← request handlers
+js/           ← installable PWA (wallet, merchant, admin, demo, tutorial)
 ```
 
-### Going live on the real Sand Dollar
-Implement `SandDollarRail` in `server/rail.js` (the stub is there with the method
-signatures) against the Central Bank API, then change the last line to:
-```js
-export const rail = new SandDollarRail({ baseUrl: process.env.SD_BASE_URL, apiKey: process.env.SD_API_KEY });
-```
-Nothing else changes. To add another island, add another adapter — the core is
-country-agnostic. That's the "core + per-country adapter → network" design.
+**The network design:** the platform core is identical on every island; each island is an
+*adapter* (its currency + rail + regulator). Build once, deploy per island, connect them
+into a network. Cross-island FX is the layer nobody owns yet.
 
-## Not yet (before real-money production)
-- Authorized Sand Dollar integration (Central Bank credentials)
-- Real KYC/AML vendor for identity verification
-- HTTPS, rate limiting, audit logging, security review
-- Hosted database + backups
+## Going live on a real rail
+
+Implement the three methods in `server/rail.js → SandDollarRail` and set `SD_BASE_URL` +
+`SD_API_KEY`. The app auto-selects the live rail. Repeat per island as each comes online.
+
+## License
+
+Proprietary — see [LICENSE](LICENSE). © 2026 Caribe.

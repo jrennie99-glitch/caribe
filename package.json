@@ -8,7 +8,8 @@
     "start": "node --no-warnings server/server.js",
     "dev": "node --no-warnings --watch server/server.js",
     "reset": "rm -f server/caribe.db && echo 'database reset'",
-    "live": "bash scripts/go-live.sh"
+    "live": "bash scripts/go-live.sh",
+    "test": "DB_PATH=:memory: TOKEN_SECRET=testsecret ADMIN_KEY=testadminkey node --no-warnings --test test/*.test.js"
   },
   "engines": {
     "node": ">=22.5"
