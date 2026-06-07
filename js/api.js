@@ -40,5 +40,6 @@ export const api = {
   health:   ()  => request('GET',  '/health'),
   fees:     ()  => request('GET',  '/fees'),
   islands:  ()  => request('GET',  '/islands'),
+  demo:     ()  => request('POST', '/demo'),
   kycDocument: (b) => request('POST', '/kyc/document', b),
 };

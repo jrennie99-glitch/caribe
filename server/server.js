@@ -76,6 +76,7 @@ const LIMITS = {
   '/api/login':    { max: 8,   windowMs: 60000 },
   '/api/register': { max: 5,   windowMs: 60000 },
   '/api/kyc/document': { max: 10, windowMs: 60000 },
+  '/api/demo':     { max: 6,   windowMs: 60000 },
   _global:         { max: 240, windowMs: 60000 },
 };
 
@@ -89,6 +90,7 @@ const ROUTES = [
   ['GET',  '/api/health',       ()       => api.health(),          false],
   ['GET',  '/api/fees',         ()       => api.fees(),            false],
   ['GET',  '/api/islands',      ()       => api.islands(),         false],
+  ['POST', '/api/demo',         ()       => api.demo(),            false],
   ['POST', '/api/kyc/document', (uid,b)     => api.kycDocument(uid, b),       true ],
   ['GET',  '/api/kyc/pending',  (uid,b,q,h) => api.kycPending(uid, b, q, h),  false],
   ['POST', '/api/kyc/review',   (uid,b,q,h) => api.kycReview(uid, b, q, h),   false],

@@ -222,6 +222,15 @@ body{
 .stat .sv{font-size:18px;font-weight:800;letter-spacing:-.02em}
 .stat .sl{font-size:10.5px;font-weight:600;color:var(--muted);margin-top:4px}
 
+/* guided tutorial (coachmarks) */
+.coach-overlay{position:fixed;inset:0;background:rgba(6,28,38,.74);z-index:60}
+.spot{position:fixed;border-radius:16px;box-shadow:0 0 0 9999px rgba(6,28,38,.74);z-index:60;pointer-events:none;
+  transition:all .25s cubic-bezier(.2,.7,.2,1)}
+.coach-tip{position:fixed;z-index:61;left:50%;transform:translateX(-50%);width:calc(100% - 32px);max-width:440px;
+  background:#fff;border-radius:18px;padding:16px 18px;box-shadow:var(--sh-3);animation:fade .2s ease both}
+.coach-tip.center{transform:translate(-50%,-50%);text-align:center}
+.coach-tip h2,.coach-tip h3{letter-spacing:-.02em}
+
 /* misc */
 .badge{font-size:10px;font-weight:700;padding:4px 9px;border-radius:8px;background:var(--card-2);color:var(--ocean);border:1px solid var(--line)}
 .badge.pay{color:var(--sea)}

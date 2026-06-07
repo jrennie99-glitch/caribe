@@ -253,10 +253,12 @@ function renderRegister(){
      </div>
      <div class="body" id="obbody"></div>
      <div class="foot"><button class="btn" id="obnext">Get started</button>
+       <button class="btn ghost" id="obdemo" style="margin-top:10px">▶  Try the live demo</button>
        <p class="note">Already have a wallet? <a id="toLogin" style="color:var(--sea);font-weight:700">Log in</a><br>
        Bahamas · Sand Dollar (B$1 = US$1).</p></div>
    </div>`;
   $('#toLogin').onclick=()=>{authMode='login';render();};
+  $('#obdemo').onclick=()=>runDemo($('#obdemo'));
   let step=0; const body=$('#obbody'), next=$('#obnext');
   const data={role:'personal',name:'',business:'',category:'Food',phone:'',dob:'',idNumber:'',pin:'',island:'BS'};
   const CATS=['Food','Grocery','Retail','Transit','Health','Services','Other'];
@@ -333,9 +335,11 @@ function renderLogin(){
        <div class="field"><label>PIN</label><input id="l_pin" inputmode="numeric" maxlength="4" placeholder="••••"></div>
      </div>
      <div class="foot"><button class="btn" id="login">Log in</button>
+       <button class="btn ghost" id="logindemo" style="margin-top:10px">▶  Try the live demo</button>
        <p class="note">New here? <a id="toReg" style="color:var(--sea);font-weight:700">Create a wallet</a></p></div>
    </div>`;
   $('#toReg').onclick=()=>{authMode='register';render();};
+  $('#logindemo').onclick=()=>runDemo($('#logindemo'));
   $('#login').onclick=async()=>{
     const b=$('#login'); b.disabled=true; b.textContent='Logging in…';
     try{
@@ -405,7 +409,7 @@ function renderDiscover(){
       <div class="m"><div class="n">${m.name}</div><div class="s">${m.category||''} · accepts Sand Dollar</div></div>
       <div class="badge">Pay ›</div></div>`).join('')}</div>
     <div class="sec"><h3>Caribbean network</h3><span class="badge">${s.islands.filter(i=>i.live).length} islands</span></div>
-    <div class="card">${s.islands.map(i=>`<div class="row" style="cursor:default">
+    <div class="card net-card">${s.islands.map(i=>`<div class="row" style="cursor:default">
       <div class="av" style="background:${i.live?'linear-gradient(135deg,var(--sea),var(--aqua))':'#9fb4bf'};font-size:12px">${i.symbol}</div>
       <div class="m"><div class="n">${i.name}</div><div class="s">${i.currency} · ${i.live?'live':'coming soon'}</div></div>
       ${i.code===s.user.island?'<span class="badge">You</span>':(i.live?'<span class="dot" style="background:var(--ok)"></span>':'')}</div>`).join('')}</div>
@@ -448,12 +452,14 @@ function renderMe(){
       <div class="row" data-kyc><div class="av" style="background:#16a7c9">🪪</div><div class="m"><div class="n">Identity verification</div><div class="s">${kycLabel(u)}</div></div>${(u.kycTier>=2||u.kycStatus==='verified_full')?'<span class="badge">Tier 2</span>':`<div class="chev">${icon('chev')}</div>`}</div>
       <div class="row" style="cursor:default"><div class="av" style="background:#2fd9c5">🏦</div><div class="m"><div class="n">Sand Dollar account</div><div class="s">${u.railAccountId||'—'}</div></div></div>
       <div class="row" data-cashout><div class="av" style="background:#f5b53d">🏧</div><div class="m"><div class="n">Cash out</div><div class="s">Withdraw to Sand Dollar</div></div><div class="chev">${icon('chev')}</div></div>
+      <div class="row" data-tutorial><div class="av" style="background:#7c5cff">🎓</div><div class="m"><div class="n">Replay tutorial</div><div class="s">A quick tour of how Caribe works</div></div><div class="chev">${icon('chev')}</div></div>
     </div>
     <div class="pad"><button class="btn ghost" id="logout">Log out</button></div>
     <p class="note">Caribe · real backend, real ledger. Balances live in SQLite on the server, not on this device.</p>`);
   $('#logout').onclick=()=>{clearToken();store.clear();tab='home';render();};
   const co=app().querySelector('[data-cashout]'); if(co) co.onclick=()=>cashOut();
   const kc=app().querySelector('[data-kyc]'); if(kc) kc.onclick=()=>kycUpload();
+  const tt=app().querySelector('[data-tutorial]'); if(tt) tt.onclick=()=>startTutorial();
 }
 function kycLabel(u){
   if(u.kycStatus==='pending_review') return 'Under review · documents submitted';
@@ -621,6 +627,58 @@ function bindNav(){
   app().querySelectorAll('[data-go]').forEach(n=>n.onclick=()=>{tab=n.dataset.go;render();});
   const sc=app().querySelector('[data-scan]'); if(sc) sc.onclick=()=>scan();
   const ch=app().querySelector('[data-charge]'); if(ch) ch.onclick=()=>chargeFlow();
+}
+
+// ---------- demo mode + guided tutorial ----------
+function runDemo(btn){
+  if(btn){ btn.disabled=true; btn.textContent='Setting up demo…'; }
+  api.demo().then(async r=>{
+    setToken(r.token); await store.loadAll(); tab='home'; await render(); startTutorial();
+  }).catch(e=>{ if(btn){btn.disabled=false;btn.textContent='Try the live demo';} toast('Demo unavailable: '+(e.message||'error')); });
+}
+
+const TUTORIAL_STEPS=[
+  {sel:'.hero', title:'Your wallet', text:'Your real Sand Dollar balance, on a real double-entry ledger. Every cent is backed.'},
+  {sel:'[data-act="send"]', title:'Send anywhere', text:'Send to anyone in the Caribbean. Different island? Caribe converts the currency live and settles instantly.'},
+  {sel:'.scanbtn', title:'Scan & Pay', text:'Tap to scan a shop’s QR code and pay in one tap — like WeChat, for the islands.'},
+  {sel:'[data-act="cashin"]', title:'Cash in & out', text:'Top up from your bank or an agent, and cash out anytime.'},
+  {tab:'discover', sel:'.net-card', title:'Every island, one app', text:'Pay bills, top up phones, shop, and reach all 26 islands on the network — money flows across the whole Caribbean.'},
+  {final:true, title:'That’s Caribe 🌊', text:'One app for the islands: pay, send, bills, shops, and money across every Caribbean island. Explore freely — this is a live demo wallet.'},
+];
+function startTutorial(){
+  let i=0;
+  const ov=document.createElement('div'); ov.id='coach'; document.body.appendChild(ov);
+  const end=()=>{ ov.remove(); tab='home'; render(); };
+  async function show(){
+    const s=TUTORIAL_STEPS[i];
+    if(s.tab && tab!==s.tab){ tab=s.tab; await render(); }
+    await new Promise(r=>requestAnimationFrame(r));
+    if(s.final){
+      ov.innerHTML=`<div class="coach-overlay"></div>
+        <div class="coach-tip center" style="left:50%;top:50%;transform:translate(-50%,-50%)">
+          <div style="font-size:34px">🌊</div><h2 style="margin:6px 0 6px">${s.title}</h2>
+          <p style="margin:0 0 14px;font-size:14px;color:var(--ink-2)">${s.text}</p>
+          <button class="btn" id="ctDone">Start exploring</button></div>`;
+      ov.querySelector('#ctDone').onclick=end; return;
+    }
+    const el=document.querySelector(s.sel);
+    if(!el){ i++; return i<TUTORIAL_STEPS.length?show():end(); }
+    el.scrollIntoView({block:'center',behavior:'instant'});
+    await new Promise(r=>requestAnimationFrame(r));
+    const rct=el.getBoundingClientRect(), pad=8;
+    const below = rct.top < window.innerHeight*0.55;
+    ov.innerHTML=`<div class="spot" style="left:${rct.left-pad}px;top:${rct.top-pad}px;width:${rct.width+pad*2}px;height:${rct.height+pad*2}px"></div>
+      <div class="coach-tip" style="${below?`top:${rct.bottom+16}px`:`bottom:${window.innerHeight-rct.top+16}px`}">
+        <div class="muted" style="font-size:11px;font-weight:600">Step ${i+1} of ${TUTORIAL_STEPS.length}</div>
+        <h3 style="margin:4px 0 6px">${s.title}</h3>
+        <p style="margin:0 0 14px;font-size:14px;color:var(--ink-2)">${s.text}</p>
+        <div style="display:flex;gap:8px">
+          <button class="btn ghost" id="ctSkip" style="flex:1">Skip</button>
+          <button class="btn" id="ctNext" style="flex:2">${i===TUTORIAL_STEPS.length-1?'Finish':'Next'}</button></div></div>`;
+    ov.querySelector('#ctNext').onclick=()=>{ i++; show(); };
+    ov.querySelector('#ctSkip').onclick=end;
+  }
+  show();
 }
 
 export async function render(){

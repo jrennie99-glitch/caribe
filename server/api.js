@@ -166,6 +166,35 @@ export async function health() {
 
 export async function fees() { return ok({ schedule: FEE_SCHEDULE }); }
 
+// ---------- demo mode (one-tap funded wallet + history for showcasing) ----------
+function createUserDirect({ name, phone, island, tier = 1 }) {
+  const isle = islandByCode(island) || islandByCode('BS');
+  const accountId = 'acct_' + uuid().slice(0, 12), userId = 'usr_' + uuid().slice(0, 12);
+  const handle = '@' + name.split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+  const t = now();
+  db.prepare(`INSERT INTO accounts (id,name,kind,handle,color,emoji,category,balance_cents,allow_negative,currency,island,created_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(accountId, name, 'user', handle, '#16a7c9', null, null, 0, 0, isle.currency, isle.code, t);
+  db.prepare(`INSERT INTO users (id,account_id,name,phone,pin_hash,kyc_tier,rail_account_id,dob,id_number,created_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(userId, accountId, name, phone, hashPin('0000'), tier, 'sd_demo' + uuid().slice(0, 6), '1990-01-01', 'DEMO-ID', t);
+  return userById.get(userId);
+}
+const ensureDemoUser = (name, phone, island) => userByPhone.get(phone) || createUserDirect({ name, phone, island });
+
+export async function demo() {
+  const sysBS = systemAccounts('BSD');
+  const makeda = ensureDemoUser('Makeda Rolle', '(242) 000-1001', 'BS');
+  ensureDemoUser('Brianna Walters', '(876) 000-1002', 'JM'); // a cross-island contact (Jamaica)
+  try { postTransfer({ fromId: sysBS.treasury, toId: makeda.account_id, amountCents: 20000, kind: 'cashin', memo: 'Cash in' }); } catch {}
+  const u = createUserDirect({ name: 'You (demo)', phone: 'demo-' + uuid().slice(0, 8), island: 'BS' });
+  try { postTransfer({ fromId: sysBS.treasury, toId: u.account_id, amountCents: 25000, kind: 'cashin', memo: 'Cash in' }); } catch {}
+  // a little realistic history
+  try { postTransfer({ fromId: makeda.account_id, toId: u.account_id, amountCents: 5000, kind: 'transfer', memo: 'lunch 🙏', feeCents: 25, feePayer: makeda.account_id, feeAccount: sysBS.revenue }); } catch {}
+  try { postTransfer({ fromId: u.account_id, toId: 'm_conch', amountCents: 1850, kind: 'payment', feeCents: 18, feePayer: 'm_conch', feeAccount: sysBS.revenue }); } catch {}
+  return ok({ token: issueToken(u.id), user: publicUser(userById.get(u.id)) });
+}
+
 export async function islands() {
   return ok({
     islands: ISLANDS.map(i => ({ code: i.code, name: i.name, currency: i.currency, symbol: i.symbol, usdPer: i.usdPer, rail: i.rail, live: i.live })),
