@@ -61,14 +61,17 @@ All pricing lives in one file: `server/fees.js`. Defaults:
 
 | Action | Fee | Who pays |
 |--------|-----|----------|
-| Send (P2P) | 0.5% | sender (pays amount + fee) |
-| Gift envelope | 0.5% | sender |
-| Pay a merchant | 1.5% | merchant absorbs it (customer pays exact amount) |
-| Pay a bill | 1% | sender |
-| Cash in | free | — (funding is free to drive adoption) |
-| Cash out | 1% + B$0.25 | sender |
+| Send (P2P) | **free** | — (viral growth engine, never taxed) |
+| Gift envelope | **free** | — |
+| Pay a merchant | **1% · max B$5** | merchant absorbs it (customer pays exact amount) |
+| Pay a bill | **B$0.35 flat** | sender |
+| Cash in | **free** | — (funding is free to drive adoption) |
+| Cash out | **1% · min B$0.25 · max B$3** | sender |
 
-Change any number in `FEE_SCHEDULE` to reprice. Want a fee on cash-in too? Set its `bps`.
+Strategy: M-Pesa model on a CBDC inclusion rail — keep money moving in-network cheap/free,
+earn on merchant volume + cash-out, and on float / SaaS / lending / cross-island FX later.
+Each fee is `clamp(amount*bps/10000 + flat, min, cap)`. Change any number in `FEE_SCHEDULE`
+to reprice; set a `bps` on cash-in if you ever want to charge it.
 The fee is shown to the user in the keypad *before* they confirm (e.g. "Caribe fee B$0.50
 · total B$100.50"). `GET /api/health` reports total revenue collected (`revenueCents`).
 

@@ -27,11 +27,15 @@ function countUp(el, to){
   (function tick(now){ const p=Math.min(1,(now-t0)/dur);
     el.textContent=store.fmt(Math.round(to*ease(p))); if(p<1) requestAnimationFrame(tick); })(t0);
 }
-// mirror of server fee math, for showing a live preview before the user confirms
+// mirror of server fee math (fees.js), for showing a live preview before confirm
 function clientFee(kind, cents){
-  const r=(store.get().fees||{})[kind]||{bps:0,flat:0,payer:'sender'};
+  const r=(store.get().fees||{})[kind]||{bps:0,flat:0,min:0,cap:0,payer:'sender'};
   if(cents<=0) return {cents:0,payer:r.payer};
-  return {cents:Math.max(0,Math.floor(cents*r.bps/10000)+r.flat),payer:r.payer};
+  let f=Math.floor(cents*r.bps/10000)+(r.flat||0);
+  if(f<=0) return {cents:0,payer:r.payer};
+  if(r.min) f=Math.max(f,r.min);
+  if(r.cap) f=Math.min(f,r.cap);
+  return {cents:Math.max(0,f),payer:r.payer};
 }
 
 let tab = 'home';
