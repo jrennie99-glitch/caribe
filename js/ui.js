@@ -411,6 +411,9 @@ function renderDiscover(){
     <div class="card">
       <div class="row" data-moments><div class="av" style="background:linear-gradient(135deg,var(--coral),var(--gold))">🌅</div>
         <div class="m"><div class="n">Moments</div><div class="s">See what's happening across the islands</div></div>
+        <div class="chev">${icon('chev')}</div></div>
+      <div class="row" data-sousou><div class="av" style="background:linear-gradient(135deg,var(--violet),var(--sea))">💞</div>
+        <div class="m"><div class="n">Sou-Sou</div><div class="s">Save together — the partner-hand, digitized</div></div>
         <div class="chev">${icon('chev')}</div></div></div>
     <div class="sec"><h3>Mini-apps</h3><span class="badge">platform</span></div>
     <div class="grid">${MINIS.map(m=>`<div class="mini" data-mini="${m.id}"><div class="ic">${m.ic}</div><div class="t">${m.t}</div></div>`).join('')}</div>
@@ -429,6 +432,7 @@ function renderDiscover(){
   app().querySelectorAll('[data-mini]').forEach(n=>n.onclick=()=>runMini(n.dataset.mini));
   app().querySelectorAll('[data-store]').forEach(n=>n.onclick=()=>{ const [id,nm,cat]=n.dataset.store.split('|'); storeMerchant={id,name:decodeURIComponent(nm),category:decodeURIComponent(cat)}; tab='store'; render(); });
   const mo=app().querySelector('[data-moments]'); if(mo) mo.onclick=()=>{ tab='moments'; render(); };
+  const so=app().querySelector('[data-sousou]'); if(so) so.onclick=()=>{ tab='sousou'; render(); };
 }
 function runMini(id){
   if(id==='more') return moreMinis();
@@ -935,6 +939,64 @@ function buyItem(productId,name,price){
   });
 }
 
+// ---------- Sou-Sou (digital partner-hand) ----------
+async function renderSousou(){
+  let list=[]; try{ list=(await api.sousouList()).sousous; }catch{}
+  screen(`
+    <div class="backrow" data-back="discover">‹ Discover</div>
+    <div class="sec" style="margin-top:6px"><h3>Sou-Sou</h3><span class="link" id="newsou">＋ New</span></div>
+    ${list.length? list.map(sousouCard).join('') : `<div class="card" style="padding:18px"><div class="s muted">No sou-sou yet. Start a savings hand with people you trust — everyone pays in, the pot rotates.</div></div>`}
+    <p class="note">The partner-hand, digitized. Real money, real rotation, no organizer holding the cash. 🇧🇸</p>`);
+  app().querySelectorAll('[data-back]').forEach(n=>n.onclick=()=>{ tab=n.dataset.back; render(); });
+  $('#newsou').onclick=newSousou;
+  app().querySelectorAll('[data-pay-sou]').forEach(n=>n.onclick=()=>contributeSousou(n.dataset.paySou, n.dataset.souName, parseInt(n.dataset.souAmt,10)));
+}
+function sousouCard(s){
+  const dots=s.members.map(m=>`<div class="soudot ${m.received?'got':(m.contributed?'paid':'pend')}" title="${escapeHtml(m.name)}">${m.received?'✓':(m.contributed?'•':'')}</div>`).join('');
+  const yourTurn=s.recipient&&s.recipient.isYou;
+  return `<div class="card" style="margin-bottom:10px;padding:16px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="av" style="background:linear-gradient(135deg,var(--violet),var(--sea))">💞</div>
+      <div class="m"><div class="n">${escapeHtml(s.name)}</div><div class="s">${s.symbol}${store.fmt(s.amount)} · ${s.frequency} · ${s.size} members</div></div>
+      <div style="text-align:right"><div style="font-weight:800">${s.symbol}${store.fmt(s.pot)}</div><div class="s">pot</div></div>
+    </div>
+    <div style="display:flex;gap:6px;margin:14px 0 10px">${dots}</div>
+    <div class="s" style="margin-bottom:12px">${s.status==='complete'?'✅ Complete — everyone got their hand.':
+      `Round ${s.round} of ${s.size} · ${s.recipient?(yourTurn?'<b style="color:var(--ok)">Your turn to receive 🎉</b>':escapeHtml(s.recipient.name)+' receives this round'):''}`}</div>
+    ${s.status==='active'? (s.youContributed
+      ? `<button class="btn ghost" disabled>You've paid this round ✓</button>`
+      : `<button class="btn" data-pay-sou="${s.id}" data-sou-name="${escapeHtml(s.name)}" data-sou-amt="${s.amount}">Pay ${s.symbol}${store.fmt(s.amount)} this round</button>`):''}</div>`;
+}
+function newSousou(){
+  const s=store.get(); const picked=new Set();
+  const bg=openSheet(`<h2>New Sou-Sou</h2><p class="lead">Everyone pays in each round; the pot rotates to one member each round until all have received.</p>
+    <div class="field" style="margin:6px 0"><label>Name</label><input id="souname" placeholder="e.g. Christmas Hand"></div>
+    <div class="field" style="margin:6px 0"><label>Amount each, per round</label><input id="souamt" inputmode="decimal" placeholder="50.00"></div>
+    <label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin:10px 18px 4px">Members (same island)</label>
+    <div style="max-height:34vh;overflow:auto;margin:0 6px">${s.contacts.filter(c=>!c.currency||c.currency===s.user.currency).map(c=>`<div class="row" data-soupick="${c.id}">${avatar(c.name,c.color)}<div class="m"><div class="n">${c.name}</div></div><div class="soucheck" data-for="${c.id}">○</div></div>`).join('')||'<p class="note">No same-island contacts to invite.</p>'}</div>
+    <button class="btn" id="soucreate" style="margin-top:12px">Create sou-sou</button>`);
+  bg.querySelectorAll('[data-soupick]').forEach(n=>n.onclick=()=>{ const id=n.dataset.soupick; const c=bg.querySelector(`.soucheck[data-for="${id}"]`);
+    if(picked.has(id)){picked.delete(id);c.textContent='○';c.style.color='var(--faint)';}else{picked.add(id);c.textContent='●';c.style.color='var(--sea)';} });
+  $('#soucreate',bg).onclick=async()=>{
+    const name=$('#souname',bg).value.trim(); const amt=Math.round(parseFloat($('#souamt',bg).value||'0')*100);
+    if(!name||!amt||!picked.size){ const b=$('#soucreate',bg); b.classList.add('coral'); b.textContent='Name, amount + 1 member'; setTimeout(()=>{b.classList.remove('coral');b.textContent='Create sou-sou';},1400); return; }
+    const b=$('#soucreate',bg); b.disabled=true; b.textContent='Creating…';
+    try{ await api.sousouCreate({name,amountCents:amt,memberIds:[...picked]}); closeSheet(); renderSousou(); }
+    catch(e){ b.disabled=false; b.textContent=e.message||'Try again'; }
+  };
+}
+function contributeSousou(id,name,amt){
+  confirmPay(`Pay into ${name}`, 'Sou-Sou contribution', amt, null, async()=>{
+    const go=$('#go'); if(go){go.disabled=true;go.textContent='Paying…';}
+    try{ const r=await api.sousouContribute({id}); await store.refresh(); closeSheet();
+      if(r.paidOut && r.paidOut.toRecipient) successSheet('🎉 You got the hand!', `${SYM}${store.fmt(r.paidOut.amount)} paid out to you.`);
+      else if(r.paidOut) successSheet('Round complete', `${SYM}${store.fmt(r.paidOut.amount)} paid to this round's member.`);
+      else successSheet('Paid in', `${SYM}${store.fmt(amt)} into ${name}`);
+      tab='sousou'; }
+    catch(e){ if(go) shake('go', e.message||'Try again'); }
+  });
+}
+
 // ---------- AI money assistant ----------
 function askCaribe(){
   const bg=openSheet(`<h2>✨ Ask Caribe</h2><p class="lead">Your money assistant</p>
@@ -1014,6 +1076,7 @@ export async function render(){
   if(tab==='moments') return renderMoments();
   if(tab==='store') return renderStore();
   if(tab==='insights') return renderInsights();
+  if(tab==='sousou') return renderSousou();
   const merchant=store.get().user.accountKind==='merchant';
   if(merchant){
     if(tab==='activity') return renderActivity();

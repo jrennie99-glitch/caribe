@@ -57,6 +57,9 @@ export const api = {
   productAdd:   (b) => request('POST', '/products/add', b),
   buyProduct:   (b) => request('POST', '/products/buy', b),
   insights:     ()  => request('GET',  '/insights'),
+  sousouList:   ()  => request('GET',  '/sousou/list'),
+  sousouCreate: (b) => request('POST', '/sousou/create', b),
+  sousouContribute: (b) => request('POST', '/sousou/contribute', b),
   callConfig:   ()  => request('GET',  '/call/config'),
   callSignal:   (b) => request('POST', '/call/signal', b),
 };

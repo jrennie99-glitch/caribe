@@ -196,6 +196,72 @@ export async function demo() {
   return ok({ token: issueToken(u.id), user: publicUser(userById.get(u.id)) });
 }
 
+// ---------- Sou-Sou (digital partner-hand / rotating savings) ----------
+function shapeSousou(s, viewer) {
+  const members = db.prepare(`SELECT m.account_id, m.position, m.received, a.name, a.color FROM sousou_members m JOIN accounts a ON a.id=m.account_id WHERE m.sousou_id=? ORDER BY m.position`).all(s.id);
+  const contribThis = db.prepare(`SELECT account_id FROM sousou_contributions WHERE sousou_id=? AND round=?`).all(s.id, s.current_round).map(r => r.account_id);
+  const recipient = members.find(m => m.position === s.current_round);
+  return {
+    id: s.id, name: s.name, amount: s.amount_cents, currency: s.currency, symbol: symbolFor(s.currency),
+    size: s.size, frequency: s.frequency, status: s.status, round: s.current_round, pot: s.amount_cents * s.size,
+    youContributed: contribThis.includes(viewer),
+    contributedCount: contribThis.length,
+    recipient: recipient ? { name: recipient.name, isYou: recipient.account_id === viewer } : null,
+    members: members.map(m => ({ name: m.name, color: m.color, position: m.position, received: !!m.received, contributed: contribThis.includes(m.account_id), isYou: m.account_id === viewer })),
+  };
+}
+export async function sousouCreate(userId, { name, amountCents, frequency, memberIds } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  name = (name || '').trim(); if (!name) return err(400, 'name', 'Name your sou-sou');
+  if (!Number.isInteger(amountCents) || amountCents <= 0) return err(400, 'amount', 'Set a contribution amount');
+  const cur = accountById.get(u.account_id).currency;
+  let ids = (Array.isArray(memberIds) ? memberIds : []).filter(id => { const a = accountById.get(id); return a && a.currency === cur && a.id !== u.account_id; });
+  const members = [u.account_id, ...new Set(ids)];
+  if (members.length < 2) return err(400, 'members', 'Add at least one other member (same island)');
+  const id = 'sou_' + uuid().slice(0, 12), t = now(), pool = 'pool_' + id;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare(`INSERT INTO accounts (id,name,kind,handle,color,emoji,category,balance_cents,allow_negative,currency,island,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(pool, 'Sou-Sou: ' + name, 'treasury', null, '#7c5cff', '💞', null, 0, 0, cur, accountById.get(u.account_id).island, t);
+    db.prepare(`INSERT INTO sousou (id,name,creator_account,amount_cents,currency,size,frequency,status,current_round,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, name, u.account_id, amountCents, cur, members.length, frequency || 'weekly', 'active', 1, t);
+    const im = db.prepare(`INSERT INTO sousou_members (sousou_id,account_id,position,received) VALUES (?,?,?,0)`);
+    members.forEach((acc, i) => im.run(id, acc, i + 1));
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  return ok({ id });
+}
+export async function sousouList(userId) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const rows = db.prepare(`SELECT s.* FROM sousou s JOIN sousou_members m ON m.sousou_id=s.id WHERE m.account_id=? ORDER BY s.created_at DESC`).all(u.account_id);
+  return ok({ sousous: rows.map(s => shapeSousou(s, u.account_id)) });
+}
+export async function sousouContribute(userId, { id } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const s = db.prepare(`SELECT * FROM sousou WHERE id=?`).get(id); if (!s) return err(404, 'no_sousou');
+  if (s.status !== 'active') return err(400, 'complete', 'This sou-sou is complete');
+  if (!db.prepare(`SELECT 1 FROM sousou_members WHERE sousou_id=? AND account_id=?`).get(id, u.account_id)) return err(403, 'not_member');
+  if (db.prepare(`SELECT 1 FROM sousou_contributions WHERE sousou_id=? AND round=? AND account_id=?`).get(id, s.current_round, u.account_id)) return err(400, 'already', "You've already paid this round");
+  const pool = 'pool_' + id;
+  let txn;
+  try { txn = postTransfer({ fromId: u.account_id, toId: pool, amountCents: s.amount_cents, kind: 'sousou', memo: 'Sou-Sou: ' + s.name }); }
+  catch (e) { if (e instanceof LedgerError && e.code === 'INSUFFICIENT_FUNDS') return err(402, 'insufficient_funds', 'Not enough balance'); throw e; }
+  db.prepare(`INSERT INTO sousou_contributions (id,sousou_id,round,account_id,txn_id,created_at) VALUES (?,?,?,?,?,?)`)
+    .run('sc_' + uuid().slice(0, 10), id, s.current_round, u.account_id, txn.id, now());
+  let paidOut = null;
+  const cnt = db.prepare(`SELECT COUNT(*) c FROM sousou_contributions WHERE sousou_id=? AND round=?`).get(id, s.current_round).c;
+  if (cnt >= s.size) {
+    const recip = db.prepare(`SELECT account_id FROM sousou_members WHERE sousou_id=? AND position=?`).get(id, s.current_round);
+    const pot = s.amount_cents * s.size;
+    postTransfer({ fromId: pool, toId: recip.account_id, amountCents: pot, kind: 'sousou_payout', memo: 'Sou-Sou payout: ' + s.name });
+    db.prepare(`UPDATE sousou_members SET received=1 WHERE sousou_id=? AND account_id=?`).run(id, recip.account_id);
+    const next = s.current_round + 1;
+    db.prepare(`UPDATE sousou SET current_round=?, status=? WHERE id=?`).run(next, next > s.size ? 'complete' : 'active', id);
+    paidOut = { amount: pot, toRecipient: recip.account_id === u.account_id };
+  }
+  return ok({ sousou: shapeSousou(db.prepare(`SELECT * FROM sousou WHERE id=?`).get(id), u.account_id), paidOut, balance: balanceOf(u.account_id) });
+}
+
 // ---------- spending insights (real analytics on the ledger) ----------
 const OUT_KINDS = "('payment','transfer','gift','bill','cashout','xborder')";
 export async function insights(userId) {

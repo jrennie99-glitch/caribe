@@ -116,6 +116,9 @@ const ROUTES = [
   ['POST', '/api/products/add', (uid, b) => api.productAdd(uid, b),  true ],
   ['POST', '/api/products/buy', (uid, b) => api.buyProduct(uid, b),  true ],
   ['GET',  '/api/insights',     (uid)    => api.insights(uid),       true ],
+  ['POST', '/api/sousou/create',    (uid, b) => api.sousouCreate(uid, b),     true ],
+  ['GET',  '/api/sousou/list',      (uid)    => api.sousouList(uid),          true ],
+  ['POST', '/api/sousou/contribute',(uid, b) => api.sousouContribute(uid, b), true ],
   ['GET',  '/api/call/config',  ()       => api.callConfig(),        false],
   ['POST', '/api/call/signal',  (uid, b) => api.callSignal(uid, b),  true ],
 ];

@@ -136,6 +136,18 @@ function migrate() {
     id TEXT PRIMARY KEY, merchant_account TEXT NOT NULL, name TEXT NOT NULL, price_cents INTEGER NOT NULL,
     emoji TEXT, active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_products_merchant ON products(merchant_account)`);
+  // Sou-Sou (digital partner-hand / rotating savings club)
+  db.exec(`CREATE TABLE IF NOT EXISTS sousou (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, creator_account TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL, currency TEXT NOT NULL, size INTEGER NOT NULL,
+    frequency TEXT NOT NULL DEFAULT 'weekly', status TEXT NOT NULL DEFAULT 'active',
+    current_round INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS sousou_members (
+    sousou_id TEXT NOT NULL, account_id TEXT NOT NULL, position INTEGER NOT NULL,
+    received INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (sousou_id, account_id))`);
+  db.exec(`CREATE TABLE IF NOT EXISTS sousou_contributions (
+    id TEXT PRIMARY KEY, sousou_id TEXT NOT NULL, round INTEGER NOT NULL, account_id TEXT NOT NULL,
+    txn_id TEXT, created_at INTEGER NOT NULL, UNIQUE(sousou_id, round, account_id))`);
 }
 migrate();
 

@@ -222,6 +222,12 @@ body{
 .stat .sv{font-size:18px;font-weight:800;letter-spacing:-.02em}
 .stat .sl{font-size:10.5px;font-weight:600;color:var(--muted);margin-top:4px}
 
+/* sou-sou */
+.soudot{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;background:var(--card-2);border:1px solid var(--line);color:var(--faint)}
+.soudot.paid{background:var(--sea);color:#fff;border-color:var(--sea)}
+.soudot.got{background:var(--ok);color:#fff;border-color:var(--ok)}
+.soucheck{font-size:18px;color:var(--faint);font-weight:700}
+
 /* AI assistant + insights */
 .asktx{max-height:42vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:2px 0}
 .askmsg{max-width:86%;padding:10px 13px;border-radius:15px;font-size:14px;line-height:1.38}
