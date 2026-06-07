@@ -37,6 +37,7 @@ const ROUTES = [
   ['GET',  '/api/me',           (uid)    => api.me(uid),           true ],
   ['GET',  '/api/directory',    (uid)    => api.directory(uid),    true ],
   ['GET',  '/api/transactions', (uid)    => api.transactions(uid), true ],
+  ['GET',  '/api/summary',      (uid)    => api.summary(uid),      true ],
   ['GET',  '/api/health',       ()       => api.health(),          false],
   ['GET',  '/api/fees',         ()       => api.fees(),            false],
   ['POST', '/api/transfer',     (uid, b) => api.transfer(uid, b),  true ],

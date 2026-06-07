@@ -73,6 +73,8 @@ function migrate() {
   if (!hasColumn('transactions', 'fee_cents'))   db.exec(`ALTER TABLE transactions ADD COLUMN fee_cents INTEGER NOT NULL DEFAULT 0`);
   if (!hasColumn('transactions', 'fee_account')) db.exec(`ALTER TABLE transactions ADD COLUMN fee_account TEXT`);
   if (!hasColumn('transactions', 'fee_payer'))   db.exec(`ALTER TABLE transactions ADD COLUMN fee_payer TEXT`);
+  if (!hasColumn('users', 'dob'))                db.exec(`ALTER TABLE users ADD COLUMN dob TEXT`);
+  if (!hasColumn('users', 'id_number'))          db.exec(`ALTER TABLE users ADD COLUMN id_number TEXT`);
   // Caribe's revenue account — where all fees land. Exists on every database.
   db.prepare(`INSERT OR IGNORE INTO accounts (id,name,kind,handle,color,emoji,category,balance_cents,allow_negative,created_at)
               VALUES ('app_revenue','Caribe Revenue','treasury',NULL,'#7c5cff','📈',NULL,0,0,?)`).run(now());

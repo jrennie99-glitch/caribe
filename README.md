@@ -38,6 +38,12 @@ Reset all data: `npm run reset`
   (safe retries), KYC daily/holding limits enforced server-side.
 - **Money** — send to people (with 🧧 gift-envelope mode), pay merchants, pay bills,
   cash in / cash out.
+- **Real QR + camera scanning** — Receive/Request shows a real scannable QR
+  (`caribe:pay?to=…`); Scan & Pay uses the device camera via the BarcodeDetector API,
+  with a graceful saved-payee fallback where camera/format isn't supported.
+- **Merchant accounts** — register a business (separate onboarding + real KYC fields),
+  get a merchant dashboard: live balance, today's net / sales count / fees, recent
+  sales, a Request-Payment QR for any amount, and cash-out. Merchants absorb the 1% fee.
 - **Integrity** — `GET /api/health` reconciles every account (sum of ledger entries must
   equal stored balance) and reports any mismatch.
 - **Frontend** — installable mobile PWA, reads only real server data.

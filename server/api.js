@@ -2,7 +2,7 @@
 import { db, uuid, now } from './db.js';
 import { hashPin, verifyPin, issueToken } from './auth.js';
 import { rail } from './rail.js';
-import { postTransfer, balanceOf, historyFor, reconcile, LedgerError } from './ledger.js';
+import { postTransfer, balanceOf, historyFor, reconcile, summaryFor, LedgerError } from './ledger.js';
 import { feeFor, FEE_SCHEDULE, REVENUE_ACCOUNT } from './fees.js';
 
 // KYC tier limits (cents)
@@ -21,9 +21,12 @@ function publicUser(u) {
   const acct = accountById.get(u.account_id);
   return {
     id: u.id, accountId: u.account_id, name: u.name, phone: u.phone,
-    handle: '@' + u.name.split(' ')[0].toLowerCase(),
+    handle: acct.handle || ('@' + u.name.split(' ')[0].toLowerCase()),
     kycTier: u.kyc_tier, railAccountId: u.rail_account_id,
     balance: acct.balance_cents,
+    accountKind: acct.kind,                 // 'user' or 'merchant'
+    businessName: acct.kind === 'merchant' ? acct.name : null,
+    category: acct.category || null,
   };
 }
 
@@ -37,25 +40,37 @@ function spentTodayCents(accountId) {
 }
 
 // ---------- auth ----------
-export async function register({ name, phone, pin }) {
+export async function register({ name, phone, pin, role, business, category, dob, idNumber }) {
   name = (name || '').trim(); phone = (phone || '').trim(); pin = String(pin || '').trim();
+  const isMerchant = role === 'merchant';
+  business = (business || '').trim(); category = (category || '').trim();
+  dob = (dob || '').trim(); idNumber = (idNumber || '').trim();
+
   if (!name) return err(400, 'name_required', 'Name is required');
+  if (isMerchant && !business) return err(400, 'business_required', 'Business name is required');
   if (!phone) return err(400, 'phone_required', 'Phone is required');
   if (!/^\d{4}$/.test(pin)) return err(400, 'bad_pin', 'PIN must be 4 digits');
+  if (!dob) return err(400, 'dob_required', 'Date of birth is required');
+  if (!idNumber) return err(400, 'id_required', 'ID / NIB number is required');
   if (userByPhone.get(phone)) return err(409, 'phone_taken', 'That phone is already registered');
 
   const accountId = 'acct_' + uuid().slice(0, 12);
   const userId = 'usr_' + uuid().slice(0, 12);
+  const acctKind = isMerchant ? 'merchant' : 'user';
+  const acctName = isMerchant ? business : name;
+  const handle = '@' + acctName.split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+  const tier = isMerchant ? 2 : 1;                       // businesses get higher limits
   const prov = await rail.provision({ phone });
   const t = now();
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare(`INSERT INTO accounts (id,name,kind,handle,color,emoji,balance_cents,allow_negative,created_at)
-                VALUES (?,?,?,?,?,?,?,?,?)`)
-      .run(accountId, name, 'user', '@' + name.split(' ')[0].toLowerCase(), '#16a7c9', null, 0, 0, t);
-    db.prepare(`INSERT INTO users (id,account_id,name,phone,pin_hash,kyc_tier,rail_account_id,created_at)
-                VALUES (?,?,?,?,?,?,?,?)`)
-      .run(userId, accountId, name, phone, hashPin(pin), 1, prov.railAccountId, t);
+    db.prepare(`INSERT INTO accounts (id,name,kind,handle,color,emoji,category,balance_cents,allow_negative,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(accountId, acctName, acctKind, handle, isMerchant ? '#ff6f61' : '#16a7c9',
+           isMerchant ? '🏪' : null, isMerchant ? (category || 'Shop') : null, 0, 0, t);
+    db.prepare(`INSERT INTO users (id,account_id,name,phone,pin_hash,kyc_tier,rail_account_id,dob,id_number,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(userId, accountId, name, phone, hashPin(pin), tier, prov.railAccountId, dob, idNumber, t);
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 
@@ -91,6 +106,12 @@ export async function directory(userId) {
 export async function transactions(userId) {
   const u = userById.get(userId);
   return ok({ transactions: historyFor(u.account_id, 100), balance: balanceOf(u.account_id) });
+}
+
+export async function summary(userId) {
+  const u = userById.get(userId);
+  if (!u) return err(401, 'no_user');
+  return ok(summaryFor(u.account_id));
 }
 
 export async function health() {

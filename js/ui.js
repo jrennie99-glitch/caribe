@@ -38,6 +38,149 @@ function clientFee(kind, cents){
   return {cents:Math.max(0,f),payer:r.payer};
 }
 
+// ---------- real QR + pay-link ----------
+function qrSvg(text){
+  try{ const qr=window.qrcode(0,'M'); qr.addData(text); qr.make(); return qr.createSvgTag({cellSize:6,margin:1,scalable:true}); }
+  catch(e){ console.error('qr',e); return '<div class="muted">QR unavailable</div>'; }
+}
+function buildPayURI({id,name,kind,amt}){
+  let u=`caribe:pay?to=${encodeURIComponent(id)}&n=${encodeURIComponent(name||'')}&k=${kind||'user'}`;
+  if(amt) u+=`&amt=${amt}`; return u;
+}
+function parsePayURI(str){
+  if(!str||typeof str!=='string'||!str.startsWith('caribe:')) return null;
+  try{ const q=new URLSearchParams(str.split('?')[1]||''); const to=q.get('to'); if(!to) return null;
+    return {id:to,name:q.get('n')||'Payee',kind:q.get('k')||'user',amt:q.get('amt')?parseInt(q.get('amt'),10):0};
+  }catch(e){ return null; }
+}
+function payFromPayload(p){
+  if(!p||!p.id) return toast('That QR code is not a Caribe payment code.');
+  const me=store.get().user;
+  if(me && p.id===me.accountId) return toast("That's your own code.");
+  payToAccount(p.id,p.name,p.kind,p.amt);
+}
+function payToAccount(toId,name,kind,presetCents){
+  const isM=kind==='merchant';
+  const run=async(cents,memo)=>{
+    const call=isM?()=>api.pay({toId,amountCents:cents,memo,idempotencyKey:newKey()})
+                  :()=>api.transfer({toId,amountCents:cents,memo,idempotencyKey:newKey()});
+    await doMoney(call, isM?'Paid':'Sent', `${SYM}${store.fmt(cents)} to ${name}`);
+  };
+  if(presetCents>0) return confirmPay(isM?`Pay ${name}`:`Send to ${name}`, name, presetCents, isM?'payment':'transfer', run);
+  amountEntry(isM?`Pay ${name}`:`Send to ${name}`, isM?'Sand Dollar':'Sand Dollar', isM?'Pay now':'Send',
+    (cents,memo)=>run(cents,memo), {feeKind:isM?'payment':'transfer'});
+}
+function confirmPay(title,name,cents,feeKind,run){
+  const f=clientFee(feeKind,cents);
+  const feeLine=f.cents>0?(f.payer==='recipient'
+    ? `<div class="feeline">Caribe fee ${SYM}${store.fmt(f.cents)} · they receive ${SYM}${store.fmt(cents-f.cents)}</div>`
+    : `<div class="feeline">Caribe fee ${SYM}${store.fmt(f.cents)} · total ${SYM}${store.fmt(cents+f.cents)}</div>`):'<div class="feeline">No fee</div>';
+  const bg=openSheet(`<h2>${title}</h2><p class="lead">${name}</p>
+    <div class="amount-big"><small>${SYM}</small>${store.fmt(cents)}</div>${feeLine}
+    <button class="btn" id="go">Confirm payment</button>`);
+  $('#go',bg).onclick=()=>run(cents,'');
+}
+
+// ---------- real camera scanning ----------
+let _camStream=null,_camActive=false;
+function stopCam(){ _camActive=false; if(_camStream){try{_camStream.getTracks().forEach(t=>t.stop());}catch(e){} _camStream=null;} }
+async function startCam(){
+  const msg=()=>document.getElementById('scanmsg');
+  if(!('BarcodeDetector' in window) || !(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)){
+    if(msg()) msg().textContent='Live scanning needs a supported camera. Pick a payee below.'; return;
+  }
+  try{
+    _camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const v=document.getElementById('cam'); if(!v){ stopCam(); return; }
+    v.srcObject=_camStream; await v.play();
+    const det=new BarcodeDetector({formats:['qr_code']}); _camActive=true;
+    (async function loop(){
+      while(_camActive && document.getElementById('cam')){
+        try{ const codes=await det.detect(document.getElementById('cam'));
+          for(const c of codes){ const p=parsePayURI(c.rawValue); if(p){ stopCam(); closeSheet(); return payFromPayload(p);} }
+        }catch(e){}
+        await new Promise(r=>setTimeout(r,300));
+      }
+    })();
+  }catch(e){ if(msg()) msg().textContent='Camera blocked. Pick a payee below.'; }
+}
+function scanFallback(){
+  const s=store.get();
+  const list=[...s.merchants.map(m=>({id:m.id,name:m.name,kind:'merchant',color:m.color,emoji:m.emoji})),
+              ...s.contacts.map(c=>({id:c.id,name:c.name,kind:'user',color:c.color}))];
+  openSheet(`<h2>Pay a saved payee</h2><p class="lead">Pick who to pay</p>
+    <div style="max-height:55vh;overflow:auto">${list.map(x=>`<div class="row" data-pp="${x.id}|${x.kind}|${encodeURIComponent(x.name)}">
+      <div class="av" style="background:${x.color||'#06384f'}">${x.emoji||initials(x.name)}</div>
+      <div class="m"><div class="n">${x.name}</div><div class="s">${x.kind==='merchant'?'Merchant':'Person'}</div></div>
+      <div class="chev">${icon('chev')}</div></div>`).join('')||'<p class="note">No saved payees yet.</p>'}</div>`);
+  document.querySelectorAll('[data-pp]').forEach(n=>n.onclick=()=>{const[id,kind,nm]=n.dataset.pp.split('|');payToAccount(id,decodeURIComponent(nm),kind,0);});
+}
+
+// ---------- merchant: request payment (QR) ----------
+function chargeFlow(){
+  amountEntry('Request payment','Customer scans this to pay you','Show QR code',(cents)=>{
+    const u=store.get().user;
+    const uri=buildPayURI({id:u.accountId,name:u.businessName||u.name,kind:'merchant',amt:cents});
+    const bg=openSheet(`<div class="center"><h2>${SYM}${store.fmt(cents)}</h2>
+      <p class="lead">${u.businessName||u.name} · scan to pay</p>
+      <div class="qrbox">${qrSvg(uri)}</div>
+      <button class="btn" id="paid">Payment received? Refresh</button>
+      <button class="btn ghost" style="margin-top:10px" id="cls">Close</button></div>`);
+    $('#paid',bg).onclick=async()=>{ await store.refresh(); closeSheet(); render(); };
+    $('#cls',bg).onclick=()=>{ closeSheet(); };
+  },{feeKind:'payment'});
+}
+
+// ---------- merchant home ----------
+async function renderMerchantHome(){
+  const u=store.get().user;
+  let sum={balance:u.balance,grossInToday:0,countInToday:0,feesToday:0,netInToday:0};
+  try{ sum=await api.summary(); store.get().user.balance=sum.balance; }catch(e){}
+  const sales=store.get().txns.filter(t=>t.dir==='in').slice(0,6);
+  const salesRows = sales.length? sales.map(t=>`<div class="row">${avatar(t.party,'#1fb87a')}
+      <div class="m"><div class="n">${t.party}</div><div class="s">${timeAgo(t.ts)}${t.kind==='payment'?' · sale':''}</div></div>
+      <div class="amt pos">+${SYM}${store.fmt(t.amount)}</div></div>`).join('')
+    : `<div class="row" style="cursor:default"><div class="m"><div class="s">No sales yet. Tap Request payment to charge a customer.</div></div></div>`;
+  screen(`
+    <div class="hero" style="background:radial-gradient(140% 120% at 85% -10%,rgba(255,194,75,.5),transparent 55%),radial-gradient(120% 120% at 0% 120%,rgba(124,92,255,.3),transparent 50%),linear-gradient(125deg,var(--ocean),var(--ocean-2) 40%,var(--coral) 110%)">
+      <div class="label">${u.businessName||'Business'} · balance</div>
+      <div class="bal tnum"><small>${SYM}</small><span id="balnum">${store.fmt(sum.balance)}</span></div>
+      <div class="sub"><span class="dot"></span> ${u.category||'Merchant'} · Sand Dollar</div>
+    </div>
+    <div class="statgrid">
+      <div class="stat"><div class="sv tnum">${SYM}${store.fmt(sum.netInToday)}</div><div class="sl">Today (net)</div></div>
+      <div class="stat"><div class="sv tnum">${sum.countInToday}</div><div class="sl">Sales today</div></div>
+      <div class="stat"><div class="sv tnum">${SYM}${store.fmt(sum.feesToday)}</div><div class="sl">Fees today</div></div>
+    </div>
+    <div class="quick" style="grid-template-columns:repeat(2,1fr)">
+      <div class="qa" data-act="charge"><div class="ic">${icon('plus')}</div><div class="t">Request payment</div></div>
+      <div class="qa" data-act="mcashout"><div class="ic">${icon('receive')}</div><div class="t">Cash out</div></div>
+    </div>
+    <div class="sec"><h3>Recent sales</h3><span class="link" data-tab="activity">See all</span></div>
+    <div class="card">${salesRows}</div>
+    <p class="note">Merchant account · 1% per sale (max B$5), settled instantly to your Sand Dollar wallet.</p>
+  `);
+  app().querySelector('[data-act="charge"]').onclick=()=>chargeFlow();
+  app().querySelector('[data-act="mcashout"]').onclick=()=>cashOut();
+  app().querySelectorAll('[data-tab]').forEach(n=>n.onclick=()=>{tab=n.dataset.tab;render();});
+  countUp($('#balnum'), sum.balance);
+}
+
+// ---------- all-services list (replaces the old "coming soon") ----------
+function moreMinis(){
+  const s=store.get();
+  openSheet(`<h2>All services</h2><p class="lead">Pay any biller</p>
+    <div style="max-height:55vh;overflow:auto">${s.billers.map(b=>`<div class="row" data-bill="${b.id}|${encodeURIComponent(b.name)}">
+      <div class="av" style="background:${b.color}">${b.emoji||'🧾'}</div><div class="m"><div class="n">${b.name}</div></div>
+      <div class="chev">${icon('chev')}</div></div>`).join('')}</div>`);
+  document.querySelectorAll('[data-bill]').forEach(n=>n.onclick=()=>{const[id,nm]=n.dataset.bill.split('|');payBiller(id,decodeURIComponent(nm));});
+}
+function payBiller(billerId,name){
+  amountEntry(`Pay ${name}`,'Enter amount due','Pay',async(cents)=>{
+    await doMoney(()=>api.bill({billerId,amountCents:cents,idempotencyKey:newKey()}),'Paid',`${SYM}${store.fmt(cents)} to ${name}`);
+  },{feeKind:'bill'});
+}
+
 let tab = 'home';
 let authMode = 'register';
 
@@ -56,7 +199,7 @@ function openSheet(html){
   bg.addEventListener('click',e=>{ if(e.target===bg) closeSheet(); });
   document.body.appendChild(bg); return bg;
 }
-function closeSheet(){ document.querySelectorAll('.sheet-bg').forEach(n=>n.remove()); }
+function closeSheet(){ stopCam(); document.querySelectorAll('.sheet-bg').forEach(n=>n.remove()); }
 function successSheet(title,sub){
   const bg=openSheet(`<div class="success"><div class="ring">${icon('check')}</div><h2>${title}</h2>
     <p class="lead">${sub}</p><button class="btn" id="done">Done</button></div>`);
@@ -92,38 +235,61 @@ function renderRegister(){
    </div>`;
   $('#toLogin').onclick=()=>{authMode='login';render();};
   let step=0; const body=$('#obbody'), next=$('#obnext');
-  const data={name:'',phone:'',pin:''};
+  const data={role:'personal',name:'',business:'',category:'Food',phone:'',dob:'',idNumber:'',pin:''};
+  const CATS=['Food','Grocery','Retail','Transit','Health','Services','Other'];
+  const grab=()=>{
+    if($('#i_name')) data.name=$('#i_name').value.trim();
+    if($('#i_biz')) data.business=$('#i_biz').value.trim();
+    if($('#i_cat')) data.category=$('#i_cat').value;
+    if($('#i_phone')) data.phone=$('#i_phone').value.trim();
+    if($('#i_dob')) data.dob=$('#i_dob').value.trim();
+    if($('#i_id')) data.idNumber=$('#i_id').value.trim();
+    if($('#i_pin')) data.pin=$('#i_pin').value.trim();
+  };
   const draw=()=>{
-    if(step===0){body.innerHTML=`
-      <div class="field"><label>Your name</label><input id="i_name" placeholder="e.g. Andre Smith" value="${data.name}"></div>
-      <div class="field"><label>Phone number</label><input id="i_phone" inputmode="tel" placeholder="(242) 000-0000" value="${data.phone}"></div>`;
-      next.textContent='Continue';}
+    if(step===0){
+      const seg=(r,l)=>`<div class="segbtn ${data.role===r?'on':''}" data-role="${r}">${l}</div>`;
+      body.innerHTML=`<div class="seg">${seg('personal','Personal')}${seg('business','Business')}</div>
+        ${data.role==='business'?`
+          <div class="field"><label>Business name</label><input id="i_biz" placeholder="e.g. Goldie's Conch Shack" value="${data.business}"></div>
+          <div class="field"><label>Category</label><select id="i_cat">${CATS.map(c=>`<option ${data.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
+          <div class="field"><label>Owner name</label><input id="i_name" placeholder="e.g. Andre Smith" value="${data.name}"></div>`
+        :`<div class="field"><label>Your name</label><input id="i_name" placeholder="e.g. Andre Smith" value="${data.name}"></div>`}
+        <div class="field"><label>Phone number</label><input id="i_phone" inputmode="tel" placeholder="(242) 000-0000" value="${data.phone}"></div>`;
+      next.textContent='Continue';
+      body.querySelectorAll('[data-role]').forEach(n=>n.onclick=()=>{ grab(); data.role=n.dataset.role; draw(); });}
     else if(step===1){body.innerHTML=`
-      <div class="center" style="padding:10px 18px"><div style="font-size:46px">🪪</div>
-        <h2 style="margin:8px 0 4px">Verify your identity</h2>
-        <p class="muted" style="font-size:13px">Bahamian KYC. In production you'd scan your NIB card or passport. Here we issue you a real Tier 1 wallet.</p></div>
-      <div class="tier">🔒 Tier 1 · hold up to B$500 · send B$300/day</div>`;
-      next.textContent='Verify &amp; continue';}
+      <div class="center" style="padding:4px 18px 2px"><div style="font-size:40px">🪪</div>
+        <h2 style="margin:6px 0 2px">Identity (KYC)</h2>
+        <p class="muted" style="font-size:12.5px">Required by the Central Bank. Stored securely; full verification against NIB/passport happens with our KYC partner before higher limits.</p></div>
+      <div class="field"><label>Date of birth</label><input id="i_dob" type="date" value="${data.dob}"></div>
+      <div class="field"><label>NIB / passport number</label><input id="i_id" placeholder="e.g. 123456789" value="${data.idNumber}"></div>
+      <div class="tier">🔒 ${data.role==='business'?'Business · hold B$10k · B$5k/day':'Tier 1 · hold B$500 · send B$300/day'}</div>`;
+      next.textContent='Continue';}
     else{body.innerHTML=`
       <div class="field"><label>Set a 4-digit PIN</label><input id="i_pin" inputmode="numeric" maxlength="4" placeholder="••••"></div>
       <p class="note">Protects your wallet. Hashed with scrypt on the server — never stored in plain text.</p>`;
-      next.textContent='Create my wallet';}
+      next.textContent=data.role==='business'?'Create business wallet':'Create my wallet';}
   };
   draw();
   next.onclick=async()=>{
+    grab();
     if(step===0){
-      data.name=$('#i_name').value.trim(); data.phone=$('#i_phone').value.trim();
-      if(!data.name||!data.phone){return shakeBtn(next,'Fill both fields');}
+      if(data.role==='business' && !data.business) return shakeBtn(next,'Enter business name');
+      if(!data.name) return shakeBtn(next,'Enter your name');
+      if(!data.phone) return shakeBtn(next,'Enter phone number');
       step=1;draw();
-    } else if(step===1){ step=2; draw(); }
-    else{
-      data.pin=$('#i_pin').value.trim();
+    } else if(step===1){
+      if(!data.dob) return shakeBtn(next,'Enter date of birth');
+      if(!data.idNumber) return shakeBtn(next,'Enter ID number');
+      step=2;draw();
+    } else {
       if(!/^\d{4}$/.test(data.pin)) return shakeBtn(next,'Enter 4 digits');
       next.disabled=true; next.textContent='Creating…';
       try{
         const r=await api.register(data); setToken(r.token);
         await store.loadAll(); tab='home'; render();
-      }catch(e){ next.disabled=false; shakeBtn(next, e.code==='phone_taken'?'Phone already registered':(e.message||'Try again')); draw?.(); }
+      }catch(e){ next.disabled=false; shakeBtn(next, e.code==='phone_taken'?'Phone already registered':(e.message||'Try again')); }
     }
   };
 }
@@ -216,7 +382,7 @@ function renderDiscover(){
   app().querySelectorAll('[data-pay]').forEach(n=>n.onclick=()=>payMerchant(n.dataset.pay));
 }
 function runMini(id){
-  if(id==='more') return toast('Mini-app store coming soon — any Bahamian business can build here.');
+  if(id==='more') return moreMinis();
   const billerId=MINI_MAP[id]; const s=store.get();
   const biller=s.billers.find(b=>b.id===billerId)||{name:'Bill'};
   amountEntry(`Pay ${biller.name}`, id==='topup'?'Aliv / BTC prepaid credit':'Enter amount due', 'Pay', async(cents)=>{
@@ -323,19 +489,19 @@ function payMerchant(mId){
   },{feeKind:'payment'});
 }
 function scan(){
-  const s=store.get();
-  openSheet(`<h2>Scan &amp; Pay</h2><p class="lead">Point at a merchant QR. (Demo: pick one.)</p>
-    <div style="background:#06384f;border-radius:18px;height:150px;display:flex;align-items:center;justify-content:center;color:#fff;margin:6px 0 14px">
-      <div class="center"><div style="font-size:40px">⛶</div><div style="color:#9fc7d6;font-size:12px;margin-top:6px">camera viewfinder</div></div></div>
-    ${s.merchants.slice(0,3).map(m=>`<div class="row" data-pay="${m.id}"><div class="av" style="background:${m.color}">${m.emoji}</div>
-      <div class="m"><div class="n">${m.name}</div><div class="s">tap to simulate scan</div></div><div class="badge">Pay ›</div></div>`).join('')}`);
-  document.querySelectorAll('[data-pay]').forEach(n=>n.onclick=()=>payMerchant(n.dataset.pay));
+  openSheet(`<h2>Scan to pay</h2><p class="lead">Point your camera at a Caribe QR code</p>
+    <div class="scanwrap"><video id="cam" playsinline muted></video><div class="scanframe"></div></div>
+    <div id="scanmsg" class="feeline">&nbsp;</div>
+    <button class="btn ghost" id="scanalt">Pay a saved payee instead</button>`);
+  $('#scanalt').onclick=()=>{ stopCam(); scanFallback(); };
+  startCam();
 }
 function receive(){
   const u=store.get().user||{};
-  openSheet(`<div class="center"><h2>Receive money</h2><p class="lead">Show this to get paid in Sand Dollar</p>
-    <div style="width:200px;height:200px;margin:6px auto;border-radius:18px;background:repeating-conic-gradient(#06384f 0 25%, #fff 0 50%) 50%/22px 22px;border:8px solid #06384f"></div>
-    <div style="font-weight:800;font-size:18px;margin-top:12px">${u.name||'You'}</div>
+  const uri=buildPayURI({id:u.accountId,name:u.businessName||u.name,kind:u.accountKind||'user'});
+  openSheet(`<div class="center"><h2>Receive money</h2><p class="lead">Show this Caribe QR to get paid</p>
+    <div class="qrbox">${qrSvg(uri)}</div>
+    <div style="font-weight:800;font-size:18px;margin-top:14px">${u.businessName||u.name||'You'}</div>
     <div class="muted">${u.handle||''} · ${u.phone||''}</div>
     <button class="btn ghost" style="margin-top:16px" id="cls">Close</button></div>`);
   $('#cls').onclick=closeSheet;
@@ -365,7 +531,13 @@ function screen(inner){
   bindNav();
 }
 function navbar(){
+  const merchant=store.get().user?.accountKind==='merchant';
   const t=(id,ic,label)=>`<div class="tab ${tab===id?'active':''}" data-go="${id}"><span class="ic">${icon(ic)}</span>${label}</div>`;
+  if(merchant){
+    return `<div class="nav">${t('home','wallet','Home')}${t('activity','receipt','Sales')}
+      <div class="scanbtn" data-charge="1"><div class="b">${icon('plus')}</div></div>
+      ${t('me','user','Me')}<div class="tab" style="visibility:hidden"><span class="ic">${icon('user')}</span>·</div></div>`;
+  }
   return `<div class="nav">${t('home','wallet','Wallet')}${t('discover','compass','Discover')}
     <div class="scanbtn" data-scan="1"><div class="b">${icon('scan')}</div></div>
     ${t('activity','receipt','Activity')}${t('me','user','Me')}</div>`;
@@ -373,6 +545,7 @@ function navbar(){
 function bindNav(){
   app().querySelectorAll('[data-go]').forEach(n=>n.onclick=()=>{tab=n.dataset.go;render();});
   const sc=app().querySelector('[data-scan]'); if(sc) sc.onclick=()=>scan();
+  const ch=app().querySelector('[data-charge]'); if(ch) ch.onclick=()=>chargeFlow();
 }
 
 export async function render(){
@@ -380,6 +553,12 @@ export async function render(){
   if(!store.get().user){
     try{ await store.loadAll(); }
     catch(e){ clearToken(); return renderAuth(); }
+  }
+  const merchant=store.get().user.accountKind==='merchant';
+  if(merchant){
+    if(tab==='activity') return renderActivity();
+    if(tab==='me') return renderMe();
+    return renderMerchantHome();
   }
   if(tab==='discover') return renderDiscover();
   if(tab==='activity') return renderActivity();

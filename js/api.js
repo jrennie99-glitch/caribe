@@ -31,6 +31,7 @@ export const api = {
   me:       ()  => request('GET',  '/me'),
   directory:()  => request('GET',  '/directory'),
   transactions: () => request('GET', '/transactions'),
+  summary:  ()  => request('GET',  '/summary'),
   transfer: (b) => request('POST', '/transfer', b),
   pay:      (b) => request('POST', '/pay', b),
   bill:     (b) => request('POST', '/bill', b),

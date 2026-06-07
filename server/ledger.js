@@ -113,6 +113,24 @@ export function historyFor(accountId, limit = 100) {
   });
 }
 
+/** Today's activity summary for an account (real numbers, used by the merchant dashboard). */
+export function summaryFor(accountId) {
+  const start = new Date(); start.setHours(0, 0, 0, 0); const s = start.getTime();
+  const inRow = db.prepare(
+    `SELECT COALESCE(SUM(amount_cents),0) gross, COUNT(*) cnt FROM transactions WHERE to_account=? AND created_at>=?`
+  ).get(accountId, s);
+  const feeRow = db.prepare(
+    `SELECT COALESCE(SUM(fee_cents),0) fees FROM transactions WHERE fee_payer=? AND created_at>=?`
+  ).get(accountId, s);
+  return {
+    balance: balanceOf(accountId),
+    grossInToday: inRow.gross,
+    countInToday: inRow.cnt,
+    feesToday: feeRow.fees,
+    netInToday: inRow.gross - feeRow.fees,
+  };
+}
+
 /**
  * Integrity check: for every account, sum(credits) - sum(debits) MUST equal the stored
  * balance. Returns the list of any mismatches (empty = ledger is sound).
