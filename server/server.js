@@ -92,6 +92,7 @@ const ROUTES = [
   ['GET',  '/api/islands',      ()       => api.islands(),         false],
   ['POST', '/api/demo',         ()       => api.demo(),            false],
   ['POST', '/api/kyc/document', (uid,b)     => api.kycDocument(uid, b),       true ],
+  ['GET',  '/api/admin/stats',  (uid,b,q,h) => api.adminStats(uid, b, q, h),  false],
   ['GET',  '/api/kyc/pending',  (uid,b,q,h) => api.kycPending(uid, b, q, h),  false],
   ['POST', '/api/kyc/review',   (uid,b,q,h) => api.kycReview(uid, b, q, h),   false],
   ['POST', '/api/transfer',     (uid, b) => api.transfer(uid, b),  true ],

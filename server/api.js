@@ -219,6 +219,22 @@ export async function kycDocument(userId, { imageBase64 } = {}) {
   return ok({ status: 'pending_review' });
 }
 
+export async function adminStats(_uid, _b, _q, headers) {
+  if (!isAdmin(headers && headers['x-admin-key'])) return err(403, 'forbidden', 'Admin key required');
+  const users = db.prepare(`SELECT COUNT(*) c FROM accounts WHERE kind='user'`).get().c;
+  const merchants = db.prepare(`SELECT COUNT(*) c FROM accounts WHERE kind='merchant'`).get().c;
+  const tx = db.prepare(`SELECT COUNT(*) c, COALESCE(SUM(amount_cents),0) vol FROM transactions`).get();
+  const fees = db.prepare(`SELECT COALESCE(SUM(fee_cents),0) f FROM transactions`).get().f;
+  const xb = db.prepare(`SELECT COUNT(*) c, COALESCE(SUM(fee_cents),0) margin FROM transactions WHERE kind='xborder'`).get();
+  const revenue = db.prepare(`SELECT currency, balance_cents AS cents FROM accounts WHERE id='app_revenue' OR id LIKE 'app\\_revenue\\_%' ESCAPE '\\' ORDER BY currency`).all();
+  const pending = db.prepare(`SELECT COUNT(*) c FROM users WHERE kyc_status='pending_review'`).get().c;
+  return ok({
+    users, merchants, txns: tx.c, volumeCents: tx.vol, feesCents: fees,
+    crossBorder: { count: xb.c, marginCents: xb.margin },
+    revenue, settlements: settlementStats(), pendingKyc: pending,
+  });
+}
+
 export async function kycPending(_uid, _b, _q, headers) {
   if (!isAdmin(headers && headers['x-admin-key'])) return err(403, 'forbidden', 'Admin key required');
   const rows = db.prepare(

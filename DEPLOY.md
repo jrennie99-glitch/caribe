@@ -62,6 +62,25 @@ PORT=8080 npm start
 ```
 Put it behind a TLS reverse proxy (Caddy/nginx/Cloudflare) and set `TRUST_PROXY=true`.
 
+## 3b. Deploy to Fly.io (permanent, one command)
+
+```bash
+brew install flyctl && fly auth login
+fly launch --copy-config --no-deploy          # pick a unique app name + region
+fly secrets set TOKEN_SECRET=$(openssl rand -hex 48) ADMIN_KEY=$(openssl rand -hex 24)
+fly volumes create caribe_data --size 1 --region mia
+fly deploy
+```
+Config is in `fly.toml`. Gives a permanent `https://<app>.fly.dev` with auto-HTTPS and a
+persistent volume for the DB + KYC uploads.
+
+## Admin console
+
+Visit `/admin.html` on your deployment, enter the **ADMIN_KEY** (printed in server logs in
+dev, or the env var in prod). You get a revenue dashboard (fees + FX margin per currency,
+volume, users, merchants, cross-island count, settlements) and a KYC review queue where you
+approve/reject pending Tier-2 verifications.
+
 ## 4. Going live on the real Sand Dollar network
 
 When the Central Bank authorizes you, set in `.env`:

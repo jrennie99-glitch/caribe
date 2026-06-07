@@ -1,0 +1,42 @@
+# Fly.io deploy config. Permanent HTTPS host, one command.
+#   1. brew install flyctl && fly auth login
+#   2. fly launch --copy-config --no-deploy   (pick a unique app name + region)
+#   3. fly secrets set TOKEN_SECRET=$(openssl rand -hex 48) ADMIN_KEY=$(openssl rand -hex 24)
+#   4. fly volumes create caribe_data --size 1 --region mia
+#   5. fly deploy
+# Set SD_BASE_URL / SD_API_KEY via `fly secrets set` when you go live on the real rail.
+
+app = "caribe"
+primary_region = "mia"   # Miami — close to the Caribbean
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+  TRUST_PROXY = "true"
+  DB_PATH = "/data/caribe.db"
+  UPLOAD_DIR = "/data/uploads"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[mounts]]
+  source = "caribe_data"
+  destination = "/data"
+
+[checks.health]
+  type = "http"
+  port = 8080
+  path = "/healthz"
+  interval = "30s"
+  timeout = "4s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
