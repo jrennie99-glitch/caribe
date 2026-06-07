@@ -222,6 +222,12 @@ body{
 .stat .sv{font-size:18px;font-weight:800;letter-spacing:-.02em}
 .stat .sl{font-size:10.5px;font-weight:600;color:var(--muted);margin-top:4px}
 
+/* moments + back row */
+.backrow{margin:14px 18px 0;color:var(--sea);font-weight:600;font-size:14px;cursor:pointer}
+.composer{width:100%;border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;font-size:15px;font-family:inherit;
+  resize:none;min-height:64px;outline:none;background:#fff}
+.composer:focus{border-color:var(--sea)}
+
 /* chat */
 .chatback{font-size:32px;color:#fff;cursor:pointer;line-height:1;padding-right:8px;margin-top:-3px;font-weight:300}
 .chatscroll{display:flex;flex-direction:column;gap:7px;padding:16px 14px 86px}

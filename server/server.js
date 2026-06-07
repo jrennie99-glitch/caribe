@@ -108,6 +108,13 @@ const ROUTES = [
   ['POST', '/api/chat/send',    (uid, b) => api.chatSend(uid, b),  true ],
   ['POST', '/api/chat/read',    (uid, b) => api.chatRead(uid, b),  true ],
   ['POST', '/api/chat/money',   (uid, b) => api.chatSendMoney(uid, b), true ],
+  ['POST', '/api/feed/post',    (uid, b) => api.feedPost(uid, b),    true ],
+  ['GET',  '/api/feed',         (uid)    => api.feed(uid),           true ],
+  ['POST', '/api/feed/like',    (uid, b) => api.feedLike(uid, b),    true ],
+  ['POST', '/api/feed/comment', (uid, b) => api.feedComment(uid, b), true ],
+  ['GET',  '/api/products',     (uid,b,q)=> api.products(uid, b, q), true ],
+  ['POST', '/api/products/add', (uid, b) => api.productAdd(uid, b),  true ],
+  ['POST', '/api/products/buy', (uid, b) => api.buyProduct(uid, b),  true ],
 ];
 
 // Server-Sent Events: real-time message delivery. EventSource can't set headers, so the

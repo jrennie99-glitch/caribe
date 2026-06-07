@@ -49,5 +49,12 @@ export const api = {
   chatSend:     (b) => request('POST', '/chat/send', b),
   chatRead:     (b) => request('POST', '/chat/read', b),
   chatMoney:    (b) => request('POST', '/chat/money', b),
+  feed:         ()  => request('GET',  '/feed'),
+  feedPost:     (b) => request('POST', '/feed/post', b),
+  feedLike:     (b) => request('POST', '/feed/like', b),
+  feedComment:  (b) => request('POST', '/feed/comment', b),
+  products:     (merchant) => request('GET', '/products?merchant=' + encodeURIComponent(merchant)),
+  productAdd:   (b) => request('POST', '/products/add', b),
+  buyProduct:   (b) => request('POST', '/products/buy', b),
 };
 export const chatStreamUrl = () => '/api/chat/stream?token=' + encodeURIComponent(getToken() || '');

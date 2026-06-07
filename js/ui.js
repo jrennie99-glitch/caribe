@@ -402,13 +402,18 @@ const MINIS=[
 function renderDiscover(){
   const s=store.get();
   screen(`
-    <div class="sec" style="margin-top:18px"><h3>Mini-apps</h3><span class="badge">platform</span></div>
+    <div class="sec" style="margin-top:18px"><h3>Discover</h3></div>
+    <div class="card">
+      <div class="row" data-moments><div class="av" style="background:linear-gradient(135deg,var(--coral),var(--gold))">🌅</div>
+        <div class="m"><div class="n">Moments</div><div class="s">See what's happening across the islands</div></div>
+        <div class="chev">${icon('chev')}</div></div></div>
+    <div class="sec"><h3>Mini-apps</h3><span class="badge">platform</span></div>
     <div class="grid">${MINIS.map(m=>`<div class="mini" data-mini="${m.id}"><div class="ic">${m.ic}</div><div class="t">${m.t}</div></div>`).join('')}</div>
-    <div class="sec"><h3>Shops near you</h3><span class="muted" style="margin-left:auto;font-size:12px">Nassau</span></div>
-    <div class="card">${s.merchants.map(m=>`<div class="row" data-pay="${m.id}">
+    <div class="sec"><h3>Shops</h3><span class="muted" style="margin-left:auto;font-size:12px">tap to browse</span></div>
+    <div class="card">${s.merchants.map(m=>`<div class="row" data-store="${m.id}|${encodeURIComponent(m.name)}|${encodeURIComponent(m.category||'')}">
       <div class="av" style="background:${m.color}">${m.emoji||'🏬'}</div>
-      <div class="m"><div class="n">${m.name}</div><div class="s">${m.category||''} · accepts Sand Dollar</div></div>
-      <div class="badge">Pay ›</div></div>`).join('')}</div>
+      <div class="m"><div class="n">${m.name}</div><div class="s">${m.category||''} · storefront</div></div>
+      <div class="badge pay">Shop ›</div></div>`).join('')}</div>
     <div class="sec"><h3>Caribbean network</h3><span class="badge">${s.islands.filter(i=>i.live).length} islands</span></div>
     <div class="card net-card">${s.islands.map(i=>`<div class="row" style="cursor:default">
       <div class="av" style="background:${i.live?'linear-gradient(135deg,var(--sea),var(--aqua))':'#9fb4bf'};font-size:12px">${i.symbol}</div>
@@ -417,7 +422,8 @@ function renderDiscover(){
     <p class="note">One app, every island. Send money home across the Caribbean — Caribe converts the
       currency and settles instantly. The rail nobody owns yet.</p>`);
   app().querySelectorAll('[data-mini]').forEach(n=>n.onclick=()=>runMini(n.dataset.mini));
-  app().querySelectorAll('[data-pay]').forEach(n=>n.onclick=()=>payMerchant(n.dataset.pay));
+  app().querySelectorAll('[data-store]').forEach(n=>n.onclick=()=>{ const [id,nm,cat]=n.dataset.store.split('|'); storeMerchant={id,name:decodeURIComponent(nm),category:decodeURIComponent(cat)}; tab='store'; render(); });
+  const mo=app().querySelector('[data-moments]'); if(mo) mo.onclick=()=>{ tab='moments'; render(); };
 }
 function runMini(id){
   if(id==='more') return moreMinis();
@@ -774,6 +780,71 @@ function chatMoney(convId){
   },{feeKind:'transfer'});
 }
 
+// ---------- Moments (social feed) ----------
+async function renderMoments(){
+  let posts=[]; try{ posts=(await api.feed()).posts; }catch{}
+  screen(`
+    <div class="backrow" data-back="discover">‹ Discover</div>
+    <div class="sec" style="margin-top:6px"><h3>Moments</h3></div>
+    <div class="card" style="padding:14px 16px">
+      <textarea id="postbody" class="composer" placeholder="Share something with the islands…" maxlength="500"></textarea>
+      <button class="btn" id="postbtn" style="margin-top:10px">Post</button>
+    </div>
+    <div style="height:6px"></div>
+    ${posts.map(postCard).join('') || '<p class="note">No moments yet — be the first to post.</p>'}`);
+  $('#postbtn').onclick=async()=>{ const t=$('#postbody').value.trim(); if(!t)return; const b=$('#postbtn'); b.disabled=true;
+    try{ await api.feedPost({body:t}); renderMoments(); }catch(e){ b.disabled=false; } };
+  app().querySelectorAll('[data-back]').forEach(n=>n.onclick=()=>{ tab=n.dataset.back; render(); });
+  app().querySelectorAll('[data-like]').forEach(n=>n.onclick=async()=>{ await api.feedLike({postId:n.dataset.like}); renderMoments(); });
+  app().querySelectorAll('[data-cmt]').forEach(n=>n.onclick=()=>commentSheet(n.dataset.cmt));
+}
+function postCard(p){
+  return `<div class="card" style="margin-bottom:10px"><div style="padding:14px 16px">
+    <div style="display:flex;gap:10px;align-items:center">${avatar(p.author,p.color)}
+      <div class="m"><div class="n">${escapeHtml(p.author)}</div><div class="s">${timeAgo(p.ts)}</div></div></div>
+    <div style="margin:10px 0 12px;font-size:14.5px;line-height:1.4">${escapeHtml(p.body)}</div>
+    <div style="display:flex;gap:18px;font-size:13.5px;font-weight:600">
+      <span data-like="${p.id}" style="cursor:pointer;color:${p.liked?'var(--coral)':'var(--muted)'}">♥ ${p.likes}</span>
+      <span data-cmt="${p.id}" style="cursor:pointer;color:var(--muted)">💬 ${p.comments.length}</span></div>
+    ${p.comments.length?`<div style="margin-top:10px;border-top:1px solid var(--hair);padding-top:8px">
+      ${p.comments.map(c=>`<div style="font-size:13px;margin:4px 0"><b>${escapeHtml(c.author)}</b> ${escapeHtml(c.body)}</div>`).join('')}</div>`:''}
+  </div></div>`;
+}
+function commentSheet(postId){
+  const bg=openSheet(`<h2>Add a comment</h2>
+    <div class="field" style="margin:6px 0 12px"><input id="cmtinput" placeholder="Write a comment…"></div>
+    <button class="btn" id="cmtsend">Post comment</button>`);
+  $('#cmtsend',bg).onclick=async()=>{ const t=$('#cmtinput',bg).value.trim(); if(!t)return;
+    await api.feedComment({postId,body:t}); closeSheet(); renderMoments(); };
+}
+
+// ---------- Mini-program: merchant storefronts ----------
+let storeMerchant=null;
+async function renderStore(){
+  if(!storeMerchant){ tab='discover'; return render(); }
+  let data; try{ data=await api.products(storeMerchant.id); }catch{ data={merchant:storeMerchant,products:[]}; }
+  const m=data.merchant;
+  screen(`
+    <div class="backrow" data-back="discover">‹ Discover</div>
+    <div class="hero" style="background:radial-gradient(120% 120% at 90% -10%,rgba(255,194,75,.5),transparent 55%),linear-gradient(135deg,var(--ocean),var(--coral))">
+      <div class="label">${m.category||'Shop'} · mini-app</div>
+      <div style="font-size:25px;font-weight:800;margin:6px 0 2px;letter-spacing:-.02em">${escapeHtml(m.name)}</div>
+      <div class="sub"><span class="dot"></span> accepts Sand Dollar</div></div>
+    <div class="sec"><h3>Menu</h3></div>
+    <div class="card">${data.products.length? data.products.map(p=>`<div class="row" data-buy="${p.id}|${encodeURIComponent(p.name)}|${p.price_cents}">
+      <div class="av" style="background:var(--sand)">${p.emoji||'🛍️'}</div>
+      <div class="m"><div class="n">${escapeHtml(p.name)}</div><div class="s">${m.symbol||SYM}${store.fmt(p.price_cents)}</div></div>
+      <div class="badge pay">Buy ›</div></div>`).join('') : '<div class="row" style="cursor:default"><div class="m"><div class="s">No items listed yet.</div></div></div>'}</div>
+    <p class="note">A Caribe mini-app — a storefront on the platform. Pay in one tap; the merchant settles instantly.</p>`);
+  app().querySelectorAll('[data-back]').forEach(n=>n.onclick=()=>{ tab=n.dataset.back; render(); });
+  app().querySelectorAll('[data-buy]').forEach(n=>n.onclick=()=>{ const [id,nm,price]=n.dataset.buy.split('|'); buyItem(id,decodeURIComponent(nm),parseInt(price,10)); });
+}
+function buyItem(productId,name,price){
+  confirmPay(`Buy ${name}`, name, price, 'payment', async()=>{
+    await doMoney(()=>api.buyProduct({productId,idempotencyKey:newKey()}), 'Purchased', `${SYM}${store.fmt(price)} · ${name}`);
+  });
+}
+
 export async function render(){
   if(!isLoggedIn()) return renderAuth();
   if(!store.get().user){
@@ -783,6 +854,8 @@ export async function render(){
   SYM = store.get().user.symbol || 'B$';
   connectStream();
   if(tab==='chats') return renderChats();
+  if(tab==='moments') return renderMoments();
+  if(tab==='store') return renderStore();
   const merchant=store.get().user.accountKind==='merchant';
   if(merchant){
     if(tab==='activity') return renderActivity();

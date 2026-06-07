@@ -196,6 +196,69 @@ export async function demo() {
   return ok({ token: issueToken(u.id), user: publicUser(userById.get(u.id)) });
 }
 
+// ---------- Moments (social feed) ----------
+export async function feedPost(userId, { body } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  body = (body || '').toString().trim(); if (!body) return err(400, 'empty', 'Say something');
+  const id = 'post_' + uuid().slice(0, 12);
+  db.prepare(`INSERT INTO posts (id,account_id,body,created_at) VALUES (?,?,?,?)`).run(id, u.account_id, body.slice(0, 500), now());
+  return ok({ id });
+}
+export async function feed(userId) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const posts = db.prepare(`SELECT p.*, a.name, a.color, a.handle FROM posts p JOIN accounts a ON a.id=p.account_id ORDER BY p.created_at DESC LIMIT 40`).all();
+  const likeC = db.prepare(`SELECT COUNT(*) c FROM post_likes WHERE post_id=?`);
+  const mine = db.prepare(`SELECT 1 FROM post_likes WHERE post_id=? AND account_id=?`);
+  const cmts = db.prepare(`SELECT c.body, c.created_at, a.name FROM post_comments c JOIN accounts a ON a.id=c.account_id WHERE c.post_id=? ORDER BY c.created_at ASC`);
+  return ok({ posts: posts.map(p => ({
+    id: p.id, author: p.name, color: p.color, handle: p.handle, body: p.body, ts: p.created_at,
+    likes: likeC.get(p.id).c, liked: !!mine.get(p.id, u.account_id),
+    comments: cmts.all(p.id).map(c => ({ author: c.name, body: c.body, ts: c.created_at })),
+  })) });
+}
+export async function feedLike(userId, { postId } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  if (!db.prepare(`SELECT 1 FROM posts WHERE id=?`).get(postId)) return err(404, 'no_post');
+  const has = db.prepare(`SELECT 1 FROM post_likes WHERE post_id=? AND account_id=?`).get(postId, u.account_id);
+  if (has) db.prepare(`DELETE FROM post_likes WHERE post_id=? AND account_id=?`).run(postId, u.account_id);
+  else db.prepare(`INSERT INTO post_likes (post_id,account_id,created_at) VALUES (?,?,?)`).run(postId, u.account_id, now());
+  return ok({ liked: !has, likes: db.prepare(`SELECT COUNT(*) c FROM post_likes WHERE post_id=?`).get(postId).c });
+}
+export async function feedComment(userId, { postId, body } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  body = (body || '').toString().trim(); if (!body) return err(400, 'empty');
+  if (!db.prepare(`SELECT 1 FROM posts WHERE id=?`).get(postId)) return err(404, 'no_post');
+  db.prepare(`INSERT INTO post_comments (id,post_id,account_id,body,created_at) VALUES (?,?,?,?,?)`)
+    .run('cmt_' + uuid().slice(0, 10), postId, u.account_id, body.slice(0, 300), now());
+  return ok({ ok: true });
+}
+
+// ---------- Mini-program platform: storefronts + in-app commerce ----------
+export async function products(userId, _b, query) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const m = query && query.get('merchant'); if (!m) return err(400, 'no_merchant');
+  const acct = accountById.get(m); if (!acct) return err(404, 'no_merchant');
+  const items = db.prepare(`SELECT id,name,price_cents,emoji FROM products WHERE merchant_account=? AND active=1 ORDER BY created_at`).all(m);
+  return ok({ merchant: { id: m, name: acct.name, category: acct.category, currency: acct.currency, symbol: symbolFor(acct.currency) }, products: items });
+}
+export async function productAdd(userId, { name, priceCents, emoji } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const acct = accountById.get(u.account_id);
+  if (acct.kind !== 'merchant') return err(403, 'not_merchant', 'Only merchants can add products');
+  name = (name || '').trim(); if (!name) return err(400, 'name', 'Product name required');
+  if (!Number.isInteger(priceCents) || priceCents <= 0) return err(400, 'price', 'Valid price required');
+  const id = 'prod_' + uuid().slice(0, 10);
+  db.prepare(`INSERT INTO products (id,merchant_account,name,price_cents,emoji,active,created_at) VALUES (?,?,?,?,?,1,?)`)
+    .run(id, u.account_id, name, priceCents, emoji || '🛍️', now());
+  return ok({ id });
+}
+export async function buyProduct(userId, { productId, idempotencyKey } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const p = db.prepare(`SELECT * FROM products WHERE id=? AND active=1`).get(productId);
+  if (!p) return err(404, 'no_product', 'Item unavailable');
+  return await move(userId, { toId: p.merchant_account, amountCents: p.price_cents, memo: '🛍️ ' + p.name, kind: 'payment', idempotencyKey });
+}
+
 // ---------- chat ----------
 export async function chatStart(userId, { peerAccountId } = {}) {
   const u = userById.get(userId); if (!u) return err(401, 'no_user');

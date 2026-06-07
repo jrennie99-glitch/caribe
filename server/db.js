@@ -121,6 +121,21 @@ function migrate() {
     created_at INTEGER NOT NULL)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, created_at)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_cm_acct ON conversation_members(account_id)`);
+  // Moments (social feed)
+  db.exec(`CREATE TABLE IF NOT EXISTS posts (
+    id TEXT PRIMARY KEY, account_id TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS post_likes (
+    post_id TEXT NOT NULL, account_id TEXT NOT NULL, created_at INTEGER NOT NULL,
+    PRIMARY KEY (post_id, account_id))`);
+  db.exec(`CREATE TABLE IF NOT EXISTS post_comments (
+    id TEXT PRIMARY KEY, post_id TEXT NOT NULL, account_id TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_posts_time ON posts(created_at DESC)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_comments_post ON post_comments(post_id, created_at)`);
+  // Mini-program platform: storefronts + products (real in-app commerce)
+  db.exec(`CREATE TABLE IF NOT EXISTS products (
+    id TEXT PRIMARY KEY, merchant_account TEXT NOT NULL, name TEXT NOT NULL, price_cents INTEGER NOT NULL,
+    emoji TEXT, active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_products_merchant ON products(merchant_account)`);
 }
 migrate();
 
@@ -149,5 +164,15 @@ export function seed() {
   ins.run('biller_school','School Fees',            'biller', null, '#ff6b5e', '🎒', 'Bill', 0, 0, t);
   ins.run('biller_ferry', 'Inter-island Ferry',     'biller', null, '#2fd9c5', '⛴️', 'Bill', 0, 0, t);
   ins.run('topup',        'Phone Top-up',           'biller', null, '#22c3d6', '📱', 'Bill', 0, 0, t);
+  // storefront products for the demo merchants (real, buyable)
+  const prod = db.prepare(`INSERT OR IGNORE INTO products (id,merchant_account,name,price_cents,emoji,active,created_at) VALUES (?,?,?,?,?,1,?)`);
+  prod.run('p1', 'm_conch', 'Conch Salad', 1200, '🥗', t);
+  prod.run('p2', 'm_conch', 'Cracked Conch', 1800, '🐚', t);
+  prod.run('p3', 'm_conch', 'Conch Fritters', 900, '🍤', t);
+  prod.run('p4', 'm_fresh', 'Plantains (bunch)', 600, '🍌', t);
+  prod.run('p5', 'm_fresh', 'Bahamian Bread', 450, '🍞', t);
+  prod.run('p6', 'm_fresh', 'Fresh Snapper (lb)', 1500, '🐟', t);
+  prod.run('p7', 'm_solomon', 'Pain Reliever', 750, '💊', t);
+  prod.run('p8', 'm_jitney', 'Bus Fare', 125, '🚌', t);
   console.log('[db] seeded base accounts');
 }
