@@ -37,46 +37,68 @@ function clientFee(kind, cents){
   if(r.cap) f=Math.min(f,r.cap);
   return {cents:Math.max(0,f),payer:r.payer};
 }
+// currency + FX helpers (mirror server) for cross-island previews
+function curInfo(cur){ return (store.get().islands||[]).find(i=>i.currency===cur); }
+function symFor(cur){ return curInfo(cur)?.symbol || (cur+' '); }
+function usdPerCur(cur){ const i=curInfo(cur); return i?i.usdPer:null; }
+function fxPreview(srcCur,dstCur,cents){
+  const a=usdPerCur(srcCur), b=usdPerCur(dstCur);
+  if(a==null||b==null||cents<=0) return null;
+  const mid=Math.round(cents*(b/a));
+  const spread=Math.floor(mid*(store.get().fxSpreadBps||150)/10000);
+  return {dst:mid-spread, mid, spread, rate:b/a};
+}
 
 // ---------- real QR + pay-link ----------
 function qrSvg(text){
   try{ const qr=window.qrcode(0,'M'); qr.addData(text); qr.make(); return qr.createSvgTag({cellSize:6,margin:1,scalable:true}); }
   catch(e){ console.error('qr',e); return '<div class="muted">QR unavailable</div>'; }
 }
-function buildPayURI({id,name,kind,amt}){
+function buildPayURI({id,name,kind,amt,cur}){
   let u=`caribe:pay?to=${encodeURIComponent(id)}&n=${encodeURIComponent(name||'')}&k=${kind||'user'}`;
+  if(cur) u+=`&c=${cur}`;
   if(amt) u+=`&amt=${amt}`; return u;
 }
 function parsePayURI(str){
   if(!str||typeof str!=='string'||!str.startsWith('caribe:')) return null;
   try{ const q=new URLSearchParams(str.split('?')[1]||''); const to=q.get('to'); if(!to) return null;
-    return {id:to,name:q.get('n')||'Payee',kind:q.get('k')||'user',amt:q.get('amt')?parseInt(q.get('amt'),10):0};
+    return {id:to,name:q.get('n')||'Payee',kind:q.get('k')||'user',cur:q.get('c')||null,amt:q.get('amt')?parseInt(q.get('amt'),10):0};
   }catch(e){ return null; }
 }
 function payFromPayload(p){
   if(!p||!p.id) return toast('That QR code is not a Caribe payment code.');
   const me=store.get().user;
   if(me && p.id===me.accountId) return toast("That's your own code.");
-  payToAccount(p.id,p.name,p.kind,p.amt);
+  payToAccount(p.id,p.name,p.kind,p.amt,p.cur);
 }
-function payToAccount(toId,name,kind,presetCents){
-  const isM=kind==='merchant';
+function payToAccount(toId,name,kind,presetCents,dstCur){
+  const isM=kind==='merchant'; const me=store.get().user;
+  dstCur=dstCur||me.currency; const xb=dstCur!==me.currency;
   const run=async(cents,memo)=>{
     const call=isM?()=>api.pay({toId,amountCents:cents,memo,idempotencyKey:newKey()})
                   :()=>api.transfer({toId,amountCents:cents,memo,idempotencyKey:newKey()});
-    await doMoney(call, isM?'Paid':'Sent', `${SYM}${store.fmt(cents)} to ${name}`);
+    await doMoney(call, isM?'Paid':'Sent',
+      (res)=> res.crossBorder
+        ? `${SYM}${store.fmt(cents)} → ${symFor(res.dstCurrency)}${store.fmt(res.dstAmount)} to ${name}`
+        : `${SYM}${store.fmt(cents)} to ${name}`);
   };
-  if(presetCents>0) return confirmPay(isM?`Pay ${name}`:`Send to ${name}`, name, presetCents, isM?'payment':'transfer', run);
-  amountEntry(isM?`Pay ${name}`:`Send to ${name}`, isM?'Sand Dollar':'Sand Dollar', isM?'Pay now':'Send',
-    (cents,memo)=>run(cents,memo), {feeKind:isM?'payment':'transfer'});
+  if(presetCents>0) return confirmPay(isM?`Pay ${name}`:`Send to ${name}`, name, presetCents, isM?'payment':'transfer', run, xb?{srcCur:me.currency,dstCur}:null);
+  amountEntry(isM?`Pay ${name}`:`Send to ${name}`, xb?`${dstCur} · cross-island`:'Sand Dollar', isM?'Pay now':'Send',
+    (cents,memo)=>run(cents,memo), {feeKind:isM?'payment':'transfer', fx:xb?{srcCur:me.currency,dstCur}:null});
 }
-function confirmPay(title,name,cents,feeKind,run){
-  const f=clientFee(feeKind,cents);
-  const feeLine=f.cents>0?(f.payer==='recipient'
-    ? `<div class="feeline">Caribe fee ${SYM}${store.fmt(f.cents)} · they receive ${SYM}${store.fmt(cents-f.cents)}</div>`
-    : `<div class="feeline">Caribe fee ${SYM}${store.fmt(f.cents)} · total ${SYM}${store.fmt(cents+f.cents)}</div>`):'<div class="feeline">No fee</div>';
+function confirmPay(title,name,cents,feeKind,run,fx){
+  let line;
+  if(fx && fx.srcCur!==fx.dstCur){
+    const p=fxPreview(fx.srcCur,fx.dstCur,cents);
+    line = p? `<div class="feeline">They get <b>${symFor(fx.dstCur)}${store.fmt(p.dst)}</b> · 1 ${fx.srcCur} = ${p.rate.toFixed(2)} ${fx.dstCur}</div>`:'<div class="feeline">&nbsp;</div>';
+  } else {
+    const f=clientFee(feeKind,cents);
+    line=f.cents>0?(f.payer==='recipient'
+      ? `<div class="feeline">Caribe fee ${SYM}${store.fmt(f.cents)} · they receive ${SYM}${store.fmt(cents-f.cents)}</div>`
+      : `<div class="feeline">Caribe fee ${SYM}${store.fmt(f.cents)} · total ${SYM}${store.fmt(cents+f.cents)}</div>`):'<div class="feeline">No fee</div>';
+  }
   const bg=openSheet(`<h2>${title}</h2><p class="lead">${name}</p>
-    <div class="amount-big"><small>${SYM}</small>${store.fmt(cents)}</div>${feeLine}
+    <div class="amount-big"><small>${SYM}</small>${store.fmt(cents)}</div>${line}
     <button class="btn" id="go">Confirm payment</button>`);
   $('#go',bg).onclick=()=>run(cents,'');
 }
@@ -120,7 +142,7 @@ function scanFallback(){
 function chargeFlow(){
   amountEntry('Request payment','Customer scans this to pay you','Show QR code',(cents)=>{
     const u=store.get().user;
-    const uri=buildPayURI({id:u.accountId,name:u.businessName||u.name,kind:'merchant',amt:cents});
+    const uri=buildPayURI({id:u.accountId,name:u.businessName||u.name,kind:'merchant',amt:cents,cur:u.currency});
     const bg=openSheet(`<div class="center"><h2>${SYM}${store.fmt(cents)}</h2>
       <p class="lead">${u.businessName||u.name} · scan to pay</p>
       <div class="qrbox">${qrSvg(uri)}</div>
@@ -348,7 +370,7 @@ function renderHome(){
     <div class="sec"><h3>People</h3><span class="muted" style="margin-left:auto;font-size:12px">tap to send</span></div>
     <div class="card">${
       s.contacts.length? s.contacts.map(c=>`<div class="row" data-send="${c.id}">${avatar(c.name,c.color)}
-        <div class="m"><div class="n">${c.name}</div><div class="s">${c.handle||''}</div></div>
+        <div class="m"><div class="n">${c.name}</div><div class="s">${(c.currency&&c.currency!==s.user.currency)?'🌎 '+c.island+' · '+c.currency:(c.handle||'')}</div></div>
         <div class="chev">${icon('chev')}</div></div>`).join('')
       : `<div class="row" style="cursor:default"><div class="m"><div class="s">No other users yet. Invite someone — they register and appear here.</div></div></div>`
     }</div>
@@ -494,8 +516,13 @@ function amountEntry(title,sub,cta,onConfirm,opts={}){
     <button class="btn ${opts.coral?'coral':''}" id="go" disabled>${cta}</button>`);
   const go=$('#go',bg), amt=$('#amt',bg);
   const updFee=()=>{
-    if(!opts.feeKind) return; const el=$('#feeline',bg); if(!el) return;
+    const el=$('#feeline',bg); if(!el) return;
     if(cents<=0){ el.innerHTML='&nbsp;'; return; }
+    if(opts.fx && opts.fx.srcCur!==opts.fx.dstCur){
+      const p=fxPreview(opts.fx.srcCur,opts.fx.dstCur,cents);
+      if(p){ el.innerHTML=`They get <b>${symFor(opts.fx.dstCur)}${store.fmt(p.dst)}</b> · 1 ${opts.fx.srcCur} = ${p.rate.toFixed(2)} ${opts.fx.dstCur}`; return; }
+    }
+    if(!opts.feeKind){ el.innerHTML='&nbsp;'; return; }
     const f=clientFee(opts.feeKind,cents);
     if(f.cents<=0){ el.textContent='No fee'; return; }
     el.innerHTML = f.payer==='recipient'
@@ -513,17 +540,21 @@ function amountEntry(title,sub,cta,onConfirm,opts={}){
 // shared: run a money api call, refresh, show success or shake
 async function doMoney(call, title, sub){
   const go=$('#go'); if(go){go.disabled=true;go.textContent='Working…';}
-  try{ await call(); await store.refresh(); successSheet(title,sub); }
+  try{ const res=await call(); await store.refresh();
+    successSheet(title, typeof sub==='function'? sub(res||{}) : sub); }
   catch(e){ if(go) shake('go', e.message||'Try again'); }
 }
 
 function sendTo(contactId){
   const c=store.get().contacts.find(x=>x.id===contactId); if(!c)return;
-  amountEntry(`Send to ${c.name}`,c.handle||'',' Send',async(cents,memo,env)=>{
+  const me=store.get().user; const dstCur=c.currency||me.currency; const xb=dstCur!==me.currency;
+  amountEntry(`Send to ${c.name}`, xb?`${c.island||''} · ${dstCur}`:(c.handle||''), 'Send',async(cents,memo,env)=>{
     await doMoney(()=>api.transfer({toId:contactId,amountCents:cents,memo,envelope:!!env,idempotencyKey:newKey()}),
       env?'🧧 Envelope sent!':'Sent',
-      `${SYM}${store.fmt(cents)} to ${c.name}${memo?` · "${memo}"`:''}`);
-  },{envelope:true,memoPh:'lunch, rent, happy birthday…',feeKind:'transfer'});
+      (res)=> res.crossBorder
+        ? `${SYM}${store.fmt(cents)} → ${symFor(res.dstCurrency)}${store.fmt(res.dstAmount)} to ${c.name}`
+        : `${SYM}${store.fmt(cents)} to ${c.name}${memo?` · "${memo}"`:''}`);
+  },{envelope:!xb,memoPh:'lunch, rent, happy birthday…',feeKind:'transfer',fx:{srcCur:me.currency,dstCur}});
 }
 function payMerchant(mId){
   const m=store.get().merchants.find(x=>x.id===mId); if(!m)return;
@@ -542,7 +573,7 @@ function scan(){
 }
 function receive(){
   const u=store.get().user||{};
-  const uri=buildPayURI({id:u.accountId,name:u.businessName||u.name,kind:u.accountKind||'user'});
+  const uri=buildPayURI({id:u.accountId,name:u.businessName||u.name,kind:u.accountKind||'user',cur:u.currency});
   openSheet(`<div class="center"><h2>Receive money</h2><p class="lead">Show this Caribe QR to get paid</p>
     <div class="qrbox">${qrSvg(uri)}</div>
     <div style="font-weight:800;font-size:18px;margin-top:14px">${u.businessName||u.name||'You'}</div>

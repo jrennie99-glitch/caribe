@@ -156,7 +156,7 @@ export async function fees() { return ok({ schedule: FEE_SCHEDULE }); }
 
 export async function islands() {
   return ok({
-    islands: ISLANDS.map(i => ({ code: i.code, name: i.name, currency: i.currency, symbol: i.symbol, rail: i.rail, live: i.live })),
+    islands: ISLANDS.map(i => ({ code: i.code, name: i.name, currency: i.currency, symbol: i.symbol, usdPer: i.usdPer, rail: i.rail, live: i.live })),
     fxSpreadBps: FX_SPREAD_BPS,
   });
 }

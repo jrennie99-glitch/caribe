@@ -1,7 +1,7 @@
 // store.js (client) — in-memory cache populated from the real backend.
 import { api } from './api.js';
 
-let state = { user: null, contacts: [], merchants: [], billers: [], txns: [], fees: {}, islands: [] };
+let state = { user: null, contacts: [], merchants: [], billers: [], txns: [], fees: {}, islands: [], fxSpreadBps: 150 };
 
 export const get = () => state;
 export const balance = () => state.user?.balance ?? 0;
@@ -14,6 +14,7 @@ export async function loadAll() {
   state.txns = tx.transactions;
   state.fees = f.schedule || {};
   state.islands = isl.islands || [];
+  state.fxSpreadBps = isl.fxSpreadBps ?? 150;
   if (typeof tx.balance === 'number') state.user.balance = tx.balance;
   return state;
 }
