@@ -20,6 +20,9 @@ function pushTo(accountId, event) {
 
 const acctName = (id) => db.prepare(`SELECT name,color,handle,currency FROM accounts WHERE id=?`).get(id) || {};
 
+// relay a WebRTC signaling event to a specific account's live stream(s)
+export function relayCall(toAccount, event) { pushTo(toAccount, { type: 'call', ...event }); }
+
 export function isMember(convId, accountId) {
   return !!db.prepare(`SELECT 1 FROM conversation_members WHERE conversation_id=? AND account_id=?`).get(convId, accountId);
 }

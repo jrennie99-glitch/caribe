@@ -196,6 +196,21 @@ export async function demo() {
   return ok({ token: issueToken(u.id), user: publicUser(userById.get(u.id)) });
 }
 
+// ---------- calls (WebRTC signaling) ----------
+export async function callConfig() {
+  // ICE servers for the client. TURN credentials are meant to be client-visible (WebRTC);
+  // use short-lived TURN creds in production.
+  const { config } = await import('./config.js');
+  return ok({ iceServers: config.ice });
+}
+export async function callSignal(userId, { toAccountId, signal } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const peer = accountById.get(toAccountId); if (!peer) return err(404, 'no_peer');
+  if (!signal || !signal.kind) return err(400, 'bad_signal');
+  chat.relayCall(toAccountId, { from: u.account_id, fromName: accountById.get(u.account_id).name, signal });
+  return ok({ ok: true });
+}
+
 // ---------- Moments (social feed) ----------
 export async function feedPost(userId, { body } = {}) {
   const u = userById.get(userId); if (!u) return err(401, 'no_user');

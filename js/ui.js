@@ -463,7 +463,7 @@ function renderMe(){
     </div>
     <div class="pad"><button class="btn ghost" id="logout">Log out</button></div>
     <p class="note">Caribe · real backend, real ledger. Balances live in SQLite on the server, not on this device.</p>`);
-  $('#logout').onclick=()=>{disconnectStream();clearToken();store.clear();openConv=null;tab='home';render();};
+  $('#logout').onclick=()=>{teardown();disconnectStream();clearToken();store.clear();openConv=null;tab='home';render();};
   const co=app().querySelector('[data-cashout]'); if(co) co.onclick=()=>cashOut();
   const kc=app().querySelector('[data-kyc]'); if(kc) kc.onclick=()=>kycUpload();
   const tt=app().querySelector('[data-tutorial]'); if(tt) tt.onclick=()=>startTutorial();
@@ -696,7 +696,7 @@ function connectStream(){
   if(es || !isLoggedIn()) return;
   try{
     es=new EventSource(chatStreamUrl());
-    es.onmessage=(e)=>{ try{ const d=JSON.parse(e.data); if(d.type==='message') onIncoming(d); }catch{} };
+    es.onmessage=(e)=>{ try{ const d=JSON.parse(e.data); if(d.type==='message') onIncoming(d); else if(d.type==='call') routeCall(d); }catch{} };
     es.onerror=()=>{}; // EventSource auto-reconnects
   }catch{}
 }
@@ -705,6 +705,83 @@ function onIncoming(d){
   if(tab==='chats' && openConv===d.conversationId){ appendMessage(d.message); api.chatRead({conversationId:openConv}).catch(()=>{}); }
   else if(tab==='chats' && !openConv){ renderChats(); }
 }
+
+// ---------- calls (WebRTC) ----------
+let pc=null, localStream=null, currentCall=null, pendingOffer=null;
+async function iceConfig(){ try{ return (await api.callConfig()).iceServers; }catch{ return [{urls:'stun:stun.l.google.com:19302'}]; } }
+async function setupPc(){
+  pc=new RTCPeerConnection({ iceServers: await iceConfig() });
+  localStream.getTracks().forEach(t=>pc.addTrack(t, localStream));
+  pc.onicecandidate=(e)=>{ if(e.candidate && currentCall) api.callSignal({toAccountId:currentCall.peer, signal:{kind:'candidate', candidate:e.candidate}}).catch(()=>{}); };
+  pc.ontrack=(e)=>{ const v=document.getElementById('remoteVid'); if(v) v.srcObject=e.streams[0]; setCallStatus('Connected'); };
+  pc.onconnectionstatechange=()=>{ if(pc && ['failed','closed','disconnected'].includes(pc.connectionState)) endCall(); };
+}
+async function startCall(peerAccount, peerName, video){
+  if(currentCall||pendingOffer) return;
+  if(!navigator.mediaDevices?.getUserMedia) return toast('Calls need a camera/mic-capable browser over HTTPS.');
+  currentCall={peer:peerAccount, name:peerName, video:!!video, role:'caller'};
+  showCallUI('Calling…');
+  try{ localStream=await navigator.mediaDevices.getUserMedia({audio:true, video:!!video}); }
+  catch(e){ teardown(); return toast('Camera/mic blocked'); }
+  attachLocal(); await setupPc();
+  const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
+  api.callSignal({toAccountId:peerAccount, signal:{kind:'offer', sdp:offer, video:!!video}}).catch(()=>{});
+}
+function routeCall(d){
+  const sig=d.signal||{};
+  if(sig.kind==='offer'){
+    if(currentCall||pendingOffer){ api.callSignal({toAccountId:d.from, signal:{kind:'decline'}}).catch(()=>{}); return; }
+    pendingOffer={from:d.from, name:d.fromName, sdp:sig.sdp, video:!!sig.video};
+    showIncoming(d.fromName, !!sig.video);
+  } else if(sig.kind==='answer'){ if(pc) pc.setRemoteDescription(sig.sdp).catch(()=>{}); setCallStatus('Connected'); }
+  else if(sig.kind==='candidate'){ if(pc && sig.candidate) pc.addIceCandidate(sig.candidate).catch(()=>{}); }
+  else if(sig.kind==='hangup'||sig.kind==='decline'){ closeIncoming(); teardown(); }
+}
+async function acceptCall(){
+  const o=pendingOffer; pendingOffer=null; closeIncoming(); if(!o) return;
+  currentCall={peer:o.from, name:o.name, video:o.video, role:'callee'};
+  showCallUI('Connecting…');
+  try{ localStream=await navigator.mediaDevices.getUserMedia({audio:true, video:o.video}); }
+  catch(e){ teardown(); return toast('Camera/mic blocked'); }
+  attachLocal(); await setupPc();
+  await pc.setRemoteDescription(o.sdp);
+  const ans=await pc.createAnswer(); await pc.setLocalDescription(ans);
+  api.callSignal({toAccountId:o.from, signal:{kind:'answer', sdp:ans}}).catch(()=>{});
+}
+function declineCall(){ if(pendingOffer){ api.callSignal({toAccountId:pendingOffer.from, signal:{kind:'decline'}}).catch(()=>{}); pendingOffer=null; } closeIncoming(); }
+function endCall(){ if(currentCall) api.callSignal({toAccountId:currentCall.peer, signal:{kind:'hangup'}}).catch(()=>{}); teardown(); }
+function teardown(){ if(pc){ try{pc.close();}catch{} pc=null; } if(localStream){ localStream.getTracks().forEach(t=>t.stop()); localStream=null; } currentCall=null; removeCallUI(); }
+function attachLocal(){ const lv=document.getElementById('localVid'); if(lv && localStream) lv.srcObject=localStream; }
+function setCallStatus(s){ const el=document.getElementById('callStatus'); if(el) el.textContent=s; if(s==='Connected' && currentCall?.video){ const ci=document.getElementById('callinfo'); if(ci) ci.style.opacity='0'; } }
+function showCallUI(status){
+  removeCallUI(); const v=currentCall.video;
+  const el=document.createElement('div'); el.id='callui'; el.className='callui';
+  el.innerHTML=`
+    <video id="remoteVid" autoplay playsinline class="remotevid"></video>
+    ${v?'<video id="localVid" autoplay playsinline muted class="localvid"></video>':''}
+    <div class="callinfo" id="callinfo"><div class="av" style="width:90px;height:90px;border-radius:50%;font-size:34px;margin:0 auto">${initials(currentCall.name)}</div>
+      <div style="font-size:22px;font-weight:800;margin-top:14px;color:#fff">${escapeHtml(currentCall.name)}</div>
+      <div id="callStatus" style="color:#cfe7ef;margin-top:4px">${status}</div></div>
+    <div class="callctrls">
+      <button class="callbtn" id="cbmute" title="Mute">🔇</button>
+      <button class="callbtn hang" id="cbhang" title="End">✕</button>
+      ${v?'<button class="callbtn" id="cbcam" title="Camera">📷</button>':''}</div>`;
+  document.body.appendChild(el);
+  document.getElementById('cbhang').onclick=endCall;
+  document.getElementById('cbmute').onclick=()=>{ if(!localStream)return; const a=localStream.getAudioTracks()[0]; if(a){ a.enabled=!a.enabled; document.getElementById('cbmute').style.opacity=a.enabled?'1':'.5'; } };
+  const cam=document.getElementById('cbcam'); if(cam) cam.onclick=()=>{ const vt=localStream?.getVideoTracks()[0]; if(vt){ vt.enabled=!vt.enabled; cam.style.opacity=vt.enabled?'1':'.5'; } };
+}
+function removeCallUI(){ const e=document.getElementById('callui'); if(e) e.remove(); }
+function showIncoming(name, video){
+  closeIncoming();
+  const bg=openSheet(`<div class="center"><div class="av" style="width:80px;height:80px;border-radius:50%;font-size:30px;margin:6px auto;background:#06384f">${initials(name)}</div>
+    <h2 style="margin:12px 0 2px">${escapeHtml(name)}</h2><p class="lead">Incoming ${video?'video':'voice'} call…</p>
+    <div style="display:flex;gap:10px;margin-top:8px"><button class="btn coral" id="cdecline" style="flex:1">Decline</button><button class="btn" id="caccept" style="flex:1">Accept</button></div></div>`);
+  bg.id='incomingcall';
+  document.getElementById('caccept').onclick=acceptCall;
+  document.getElementById('cdecline').onclick=declineCall;
+}
+function closeIncoming(){ const e=document.getElementById('incomingcall'); if(e) e.remove(); }
 
 function lastPreview(m){
   if(!m) return 'No messages yet';
@@ -757,7 +834,9 @@ async function renderConversation(convId){
   let msgs=[]; try{ msgs=(await api.chatMessages(convId,0)).messages; }catch(e){}
   app().innerHTML=`
     <div class="topbar"><div class="chatback" id="back">‹</div>
-      <div class="brand" style="font-size:16px">${escapeHtml(meta.title)}<small>${meta.kind==='group'?'group chat':(meta.handle||'direct')}</small></div></div>
+      <div class="brand" style="font-size:16px">${escapeHtml(meta.title)}<small>${meta.kind==='group'?'group chat':(meta.handle||'direct')}</small></div>
+      <div class="spacer"></div>
+      ${(meta.kind==='direct'&&meta.peerAccount)?`<div class="callicon" id="voicecall">📞</div><div class="callicon" id="videocall">🎥</div>`:''}</div>
     <div class="screen chatscroll" id="msgs">${msgs.map(bubble).join('')}</div>
     <div class="chatbar">
       <button class="chatmoney" id="cmoney" title="Send money">💵</button>
@@ -771,6 +850,8 @@ async function renderConversation(convId){
   document.getElementById('csend').onclick=send;
   document.getElementById('cinput').onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } };
   document.getElementById('cmoney').onclick=()=>chatMoney(convId);
+  const vc=document.getElementById('voicecall'); if(vc) vc.onclick=()=>startCall(meta.peerAccount, meta.title, false);
+  const vd=document.getElementById('videocall'); if(vd) vd.onclick=()=>startCall(meta.peerAccount, meta.title, true);
   api.chatRead({conversationId:convId}).catch(()=>{});
 }
 function chatMoney(convId){

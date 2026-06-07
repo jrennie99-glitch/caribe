@@ -81,6 +81,18 @@ dev, or the env var in prod). You get a revenue dashboard (fees + FX margin per 
 volume, users, merchants, cross-island count, settlements) and a KYC review queue where you
 approve/reject pending Tier-2 verifications.
 
+## Voice/video calls (TURN)
+
+Calls use WebRTC and work out of the box on permissive networks via public STUN. For full
+coverage across mobile/carrier NATs, add a TURN server (free tiers: Cloudflare Calls,
+metered.ca) via env:
+```
+TURN_URL=turn:your-turn-host:3478
+TURN_USERNAME=...
+TURN_CREDENTIAL=...
+```
+Use short-lived TURN credentials in production (they are delivered to clients by design).
+
 ## 4. Going live on the real Sand Dollar network
 
 When the Central Bank authorizes you, set in `.env`:

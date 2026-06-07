@@ -222,6 +222,17 @@ body{
 .stat .sv{font-size:18px;font-weight:800;letter-spacing:-.02em}
 .stat .sl{font-size:10.5px;font-weight:600;color:var(--muted);margin-top:4px}
 
+/* calls */
+.callicon{font-size:19px;cursor:pointer;padding:0 5px}
+.callui{position:fixed;inset:0;z-index:70;background:#06222e;display:flex;flex-direction:column;align-items:center;justify-content:center;max-width:480px;margin:0 auto;overflow:hidden}
+.remotevid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#06222e}
+.localvid{position:absolute;top:calc(16px + env(safe-area-inset-top,0px));right:16px;width:96px;height:132px;object-fit:cover;border-radius:14px;border:2px solid rgba(255,255,255,.6);z-index:71;background:#000}
+.callinfo{position:relative;z-index:71;text-align:center;transition:opacity .35s}
+.callinfo .av{background:linear-gradient(135deg,var(--sea),var(--aqua));display:flex;align-items:center;justify-content:center;color:#fff}
+.callctrls{position:absolute;bottom:calc(42px + var(--safe-b));left:0;right:0;display:flex;gap:22px;justify-content:center;z-index:72}
+.callbtn{width:62px;height:62px;border-radius:50%;border:none;font-size:23px;cursor:pointer;background:rgba(255,255,255,.18);color:#fff;backdrop-filter:blur(6px);transition:opacity .15s}
+.callbtn.hang{background:var(--danger)}
+
 /* moments + back row */
 .backrow{margin:14px 18px 0;color:var(--sea);font-weight:600;font-size:14px;cursor:pointer}
 .composer{width:100%;border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;font-size:15px;font-family:inherit;

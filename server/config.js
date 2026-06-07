@@ -8,6 +8,16 @@ export const config = {
   adminKey: process.env.ADMIN_KEY || null,
   // live Sand Dollar rail (Central Bank). When both are set, the real rail is used.
   rail: { baseUrl: process.env.SD_BASE_URL || null, apiKey: process.env.SD_API_KEY || null },
+  // WebRTC ICE servers: public STUN always; add a TURN server for full NAT traversal.
+  ice: (() => {
+    const servers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    if (process.env.TURN_URL) servers.push({
+      urls: process.env.TURN_URL,
+      username: process.env.TURN_USERNAME || '',
+      credential: process.env.TURN_CREDENTIAL || '',
+    });
+    return servers;
+  })(),
 };
 export const isProd = config.env === 'production';
 
