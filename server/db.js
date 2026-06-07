@@ -75,16 +75,25 @@ function migrate() {
   if (!hasColumn('transactions', 'fee_payer'))   db.exec(`ALTER TABLE transactions ADD COLUMN fee_payer TEXT`);
   if (!hasColumn('users', 'dob'))                db.exec(`ALTER TABLE users ADD COLUMN dob TEXT`);
   if (!hasColumn('users', 'id_number'))          db.exec(`ALTER TABLE users ADD COLUMN id_number TEXT`);
+  if (!hasColumn('users', 'kyc_status'))         db.exec(`ALTER TABLE users ADD COLUMN kyc_status TEXT NOT NULL DEFAULT 'verified_basic'`);
+  if (!hasColumn('users', 'id_doc_path'))        db.exec(`ALTER TABLE users ADD COLUMN id_doc_path TEXT`);
+  if (!hasColumn('users', 'kyc_reviewed_at'))    db.exec(`ALTER TABLE users ADD COLUMN kyc_reviewed_at INTEGER`);
   // Caribe's revenue account — where all fees land. Exists on every database.
   db.prepare(`INSERT OR IGNORE INTO accounts (id,name,kind,handle,color,emoji,category,balance_cents,allow_negative,created_at)
               VALUES ('app_revenue','Caribe Revenue','treasury',NULL,'#7c5cff','📈',NULL,0,0,?)`).run(now());
+  // Real settlement ledger for the Sand Dollar rail bridge (cash-in / cash-out audit trail).
+  db.exec(`CREATE TABLE IF NOT EXISTS rail_settlements (
+    id TEXT PRIMARY KEY, account_id TEXT NOT NULL, rail_account_id TEXT,
+    kind TEXT NOT NULL, amount_cents INTEGER NOT NULL, ref TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'settled', created_at INTEGER NOT NULL)`);
 }
 migrate();
 
 // ---- seed: real rows, created once. Treasury is the Sand Dollar issuer mirror. ----
 export function seed() {
-  const count = db.prepare(`SELECT COUNT(*) c FROM accounts`).get().c;
-  if (count > 0) return;
+  // Gate on the treasury specifically — migrate() may have already created app_revenue,
+  // so a plain "is the table empty?" check would wrongly skip seeding.
+  if (db.prepare(`SELECT 1 FROM accounts WHERE id='treasury'`).get()) return;
   const ins = db.prepare(
     `INSERT INTO accounts (id,name,kind,handle,color,emoji,category,balance_cents,allow_negative,created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?)`

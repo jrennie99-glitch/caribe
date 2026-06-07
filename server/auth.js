@@ -17,6 +17,19 @@ function loadSecret() {
 const SECRET = loadSecret();
 const TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
 
+// Admin key for KYC review (real, persisted; printed at server start).
+const ADMIN_FILE = join(__dirname, '.admin');
+export function adminKey() {
+  if (existsSync(ADMIN_FILE)) return readFileSync(ADMIN_FILE, 'utf8').trim();
+  const k = randomBytes(18).toString('hex');
+  writeFileSync(ADMIN_FILE, k, { mode: 0o600 });
+  return k;
+}
+export function isAdmin(key) {
+  const a = adminKey();
+  return typeof key === 'string' && key.length === a.length && timingSafeEqual(Buffer.from(key), Buffer.from(a));
+}
+
 // ---- PIN / password hashing (scrypt) ----
 export function hashPin(pin) {
   const salt = randomBytes(16);

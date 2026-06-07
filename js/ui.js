@@ -412,14 +412,47 @@ function renderMe(){
         <div class="s">${u.phone||''} · Tier ${u.kycTier} verified</div></div></div></div>
     <div class="sec"><h3>Account</h3></div>
     <div class="card">
-      <div class="row" style="cursor:default"><div class="av" style="background:#16a7c9">🪪</div><div class="m"><div class="n">KYC level</div><div class="s">Tier ${u.kycTier} · hold B$500 · send B$300/day</div></div></div>
+      <div class="row" data-kyc><div class="av" style="background:#16a7c9">🪪</div><div class="m"><div class="n">Identity verification</div><div class="s">${kycLabel(u)}</div></div>${(u.kycTier>=2||u.kycStatus==='verified_full')?'<span class="badge">Tier 2</span>':`<div class="chev">${icon('chev')}</div>`}</div>
       <div class="row" style="cursor:default"><div class="av" style="background:#2fd9c5">🏦</div><div class="m"><div class="n">Sand Dollar account</div><div class="s">${u.railAccountId||'—'}</div></div></div>
-      <div class="row" data-cashout><div class="av" style="background:#f5b53d">🏧</div><div class="m"><div class="n">Cash out</div><div class="s">Withdraw to Sand Dollar</div></div><div class="amt muted">›</div></div>
+      <div class="row" data-cashout><div class="av" style="background:#f5b53d">🏧</div><div class="m"><div class="n">Cash out</div><div class="s">Withdraw to Sand Dollar</div></div><div class="chev">${icon('chev')}</div></div>
     </div>
     <div class="pad"><button class="btn ghost" id="logout">Log out</button></div>
     <p class="note">Caribe · real backend, real ledger. Balances live in SQLite on the server, not on this device.</p>`);
   $('#logout').onclick=()=>{clearToken();store.clear();tab='home';render();};
   const co=app().querySelector('[data-cashout]'); if(co) co.onclick=()=>cashOut();
+  const kc=app().querySelector('[data-kyc]'); if(kc) kc.onclick=()=>kycUpload();
+}
+function kycLabel(u){
+  if(u.kycStatus==='pending_review') return 'Under review · documents submitted';
+  if(u.kycStatus==='rejected') return 'Rejected · tap to re-submit';
+  if(u.kycStatus==='verified_full'||u.kycTier>=2) return 'Verified · higher limits active';
+  return 'Tier 1 · tap to raise limits';
+}
+function kycUpload(){
+  const u=store.get().user;
+  if(u.kycTier>=2||u.kycStatus==='verified_full') return toast('You are fully verified — Tier 2 limits are active.');
+  if(u.kycStatus==='pending_review') return toast('Your documents are under review. We\'ll notify you once approved.');
+  const bg=openSheet(`<h2>Raise your limits</h2><p class="lead">Upload a photo of your NIB card or passport to unlock Tier 2 (hold B$10k · send B$5k/day).</p>
+    <input type="file" id="kycfile" accept="image/*" style="display:none">
+    <button class="btn ghost" id="pick">Choose ID photo</button>
+    <div id="kycprev" class="center" style="margin-top:12px"></div>
+    <button class="btn" id="kycsend" style="margin-top:12px;display:none">Submit for review</button>
+    <p class="note">Stored securely on the server. A reviewer (or our KYC partner) verifies it against the national registry before Tier 2 is granted.</p>`);
+  let dataUrl=null;
+  $('#pick',bg).onclick=()=>$('#kycfile',bg).click();
+  $('#kycfile',bg).onchange=(e)=>{
+    const f=e.target.files[0]; if(!f) return;
+    const rd=new FileReader();
+    rd.onload=()=>{ dataUrl=rd.result; $('#kycprev',bg).innerHTML=`<img src="${dataUrl}" style="max-width:100%;max-height:200px;border-radius:12px;border:1px solid var(--line)">`; $('#kycsend',bg).style.display='block'; };
+    rd.readAsDataURL(f);
+  };
+  $('#kycsend',bg).onclick=async()=>{
+    if(!dataUrl) return;
+    const b=$('#kycsend',bg); b.disabled=true; b.textContent='Submitting…';
+    try{ await api.kycDocument({imageBase64:dataUrl}); await store.refresh(); closeSheet();
+      successSheet('Submitted for review','Your ID is in. We\'ll raise you to Tier 2 once it\'s approved.'); }
+    catch(err){ b.disabled=false; b.textContent=err.message||'Try again'; }
+  };
 }
 
 // ============================================================

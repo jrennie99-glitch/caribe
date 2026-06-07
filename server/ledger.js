@@ -132,6 +132,18 @@ export function summaryFor(accountId) {
 }
 
 /**
+ * Money-conservation invariant: every cent in circulation was issued by the treasury
+ * (cash-in) and only moves among non-treasury accounts until it leaves (cash-out). So
+ * the treasury's negative balance must exactly equal the sum of every other balance.
+ * Returns { conserved, issued, held, diff }.
+ */
+export function moneyConserved() {
+  const issued = -(db.prepare(`SELECT COALESCE(SUM(balance_cents),0) b FROM accounts WHERE kind='treasury' AND id='treasury'`).get().b);
+  const held = db.prepare(`SELECT COALESCE(SUM(balance_cents),0) b FROM accounts WHERE id NOT IN ('treasury')`).get().b;
+  return { conserved: issued === held, issued, held, diff: held - issued };
+}
+
+/**
  * Integrity check: for every account, sum(credits) - sum(debits) MUST equal the stored
  * balance. Returns the list of any mismatches (empty = ledger is sound).
  */

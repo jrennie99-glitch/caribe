@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, normalize, extname } from 'node:path';
 import { seed } from './db.js';
-import { verifyToken } from './auth.js';
+import { verifyToken, adminKey } from './auth.js';
 import * as api from './api.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -26,7 +26,7 @@ const send = (res, status, obj) => {
   res.end(body);
 };
 const readBody = (req) => new Promise((resolve) => {
-  let d = ''; req.on('data', c => { d += c; if (d.length > 1e6) req.destroy(); });
+  let d = ''; req.on('data', c => { d += c; if (d.length > 1.2e7) req.destroy(); }); // ~12MB (KYC image uploads)
   req.on('end', () => { try { resolve(d ? JSON.parse(d) : {}); } catch { resolve({}); } });
 });
 
@@ -40,6 +40,9 @@ const ROUTES = [
   ['GET',  '/api/summary',      (uid)    => api.summary(uid),      true ],
   ['GET',  '/api/health',       ()       => api.health(),          false],
   ['GET',  '/api/fees',         ()       => api.fees(),            false],
+  ['POST', '/api/kyc/document', (uid,b)        => api.kycDocument(uid, b),   true ],
+  ['GET',  '/api/kyc/pending',  (uid,b,q,h)    => api.kycPending(uid, b, q, h),  false],
+  ['POST', '/api/kyc/review',   (uid,b,q,h)    => api.kycReview(uid, b, q, h),   false],
   ['POST', '/api/transfer',     (uid, b) => api.transfer(uid, b),  true ],
   ['POST', '/api/pay',          (uid, b) => api.pay(uid, b),       true ],
   ['POST', '/api/bill',         (uid, b) => api.bill(uid, b),      true ],
@@ -59,7 +62,7 @@ async function handleApi(req, res, url) {
   }
   const body = req.method === 'POST' ? await readBody(req) : {};
   try {
-    const { status, body: out } = await handler(uid, body);
+    const { status, body: out } = await handler(uid, body, url.searchParams, req.headers);
     send(res, status, out);
   } catch (e) {
     console.error('[api error]', url.pathname, e);
@@ -90,5 +93,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`\n  🌊 Caribe running — real backend, real ledger`);
-  console.log(`  → http://localhost:${PORT}\n`);
+  console.log(`  → http://localhost:${PORT}`);
+  console.log(`  KYC admin key: ${adminKey()}  (header x-admin-key for /api/kyc/review)\n`);
 });

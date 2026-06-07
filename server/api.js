@@ -1,9 +1,25 @@
 // api.js — request handlers. Pure functions returning {status, body}.
 import { db, uuid, now } from './db.js';
-import { hashPin, verifyPin, issueToken } from './auth.js';
+import { hashPin, verifyPin, issueToken, isAdmin } from './auth.js';
 import { rail } from './rail.js';
-import { postTransfer, balanceOf, historyFor, reconcile, summaryFor, LedgerError } from './ledger.js';
+import { postTransfer, balanceOf, historyFor, reconcile, summaryFor, moneyConserved, LedgerError } from './ledger.js';
 import { feeFor, FEE_SCHEDULE, REVENUE_ACCOUNT } from './fees.js';
+import { settlementStats } from './rail.js';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const UPLOAD_DIR = join(dirname(fileURLToPath(import.meta.url)), 'uploads');
+mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// real age check from an ISO date string (YYYY-MM-DD)
+function ageFrom(dobStr) {
+  const d = new Date(dobStr); if (isNaN(d)) return null;
+  const now = new Date(); let a = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--;
+  return a;
+}
 
 // KYC tier limits (cents)
 const TIER = {
@@ -22,7 +38,7 @@ function publicUser(u) {
   return {
     id: u.id, accountId: u.account_id, name: u.name, phone: u.phone,
     handle: acct.handle || ('@' + u.name.split(' ')[0].toLowerCase()),
-    kycTier: u.kyc_tier, railAccountId: u.rail_account_id,
+    kycTier: u.kyc_tier, kycStatus: u.kyc_status, railAccountId: u.rail_account_id,
     balance: acct.balance_cents,
     accountKind: acct.kind,                 // 'user' or 'merchant'
     businessName: acct.kind === 'merchant' ? acct.name : null,
@@ -52,6 +68,10 @@ export async function register({ name, phone, pin, role, business, category, dob
   if (!/^\d{4}$/.test(pin)) return err(400, 'bad_pin', 'PIN must be 4 digits');
   if (!dob) return err(400, 'dob_required', 'Date of birth is required');
   if (!idNumber) return err(400, 'id_required', 'ID / NIB number is required');
+  const age = ageFrom(dob);
+  if (age === null) return err(400, 'bad_dob', 'Enter a valid date of birth');
+  if (age < 18) return err(403, 'underage', 'You must be 18 or older to open a wallet');
+  if (idNumber.replace(/\s/g, '').length < 5) return err(400, 'bad_id', 'Enter a valid ID / NIB number');
   if (userByPhone.get(phone)) return err(409, 'phone_taken', 'That phone is already registered');
 
   const accountId = 'acct_' + uuid().slice(0, 12);
@@ -60,7 +80,7 @@ export async function register({ name, phone, pin, role, business, category, dob
   const acctName = isMerchant ? business : name;
   const handle = '@' + acctName.split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
   const tier = isMerchant ? 2 : 1;                       // businesses get higher limits
-  const prov = await rail.provision({ phone });
+  const prov = await rail.provision({ phone, accountId });
   const t = now();
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -116,11 +136,54 @@ export async function summary(userId) {
 
 export async function health() {
   const problems = reconcile();
-  return ok({ ok: problems.length === 0, ledgerSound: problems.length === 0, problems,
-    revenueCents: balanceOf(REVENUE_ACCOUNT) });
+  const mc = moneyConserved();
+  return ok({
+    ok: problems.length === 0 && mc.conserved,
+    ledgerSound: problems.length === 0, problems,
+    revenueCents: balanceOf(REVENUE_ACCOUNT),
+    moneyConserved: mc.conserved, conservation: mc,
+    settlements: settlementStats(),
+  });
 }
 
 export async function fees() { return ok({ schedule: FEE_SCHEDULE }); }
+
+// ---------- KYC (real: capture → review → tier upgrade) ----------
+export async function kycDocument(userId, { imageBase64 } = {}) {
+  const u = userById.get(userId);
+  if (!u) return err(401, 'no_user');
+  if (!imageBase64 || typeof imageBase64 !== 'string') return err(400, 'no_image', 'Document image required');
+  const m = imageBase64.match(/^data:image\/(png|jpe?g|webp);base64,(.+)$/);
+  if (!m) return err(400, 'bad_image', 'Image must be PNG, JPG or WebP');
+  const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+  const buf = Buffer.from(m[2], 'base64');
+  if (buf.length < 1024) return err(400, 'bad_image', 'Image looks empty');
+  if (buf.length > 6 * 1024 * 1024) return err(413, 'too_large', 'Image too large (max 6MB)');
+  const fname = `kyc_${u.id}_${now()}.${ext}`;
+  writeFileSync(join(UPLOAD_DIR, fname), buf);
+  db.prepare(`UPDATE users SET id_doc_path=?, kyc_status='pending_review' WHERE id=?`).run(fname, u.id);
+  return ok({ status: 'pending_review' });
+}
+
+export async function kycPending(_uid, _b, _q, headers) {
+  if (!isAdmin(headers && headers['x-admin-key'])) return err(403, 'forbidden', 'Admin key required');
+  const rows = db.prepare(
+    `SELECT id,name,phone,kyc_tier,kyc_status,id_doc_path,dob,id_number FROM users WHERE kyc_status='pending_review' ORDER BY created_at`
+  ).all();
+  return ok({ pending: rows });
+}
+
+export async function kycReview(_uid, { userId, approve } = {}, _q, headers) {
+  if (!isAdmin(headers && headers['x-admin-key'])) return err(403, 'forbidden', 'Admin key required');
+  const target = userById.get(userId);
+  if (!target) return err(404, 'no_user');
+  if (approve) {
+    db.prepare(`UPDATE users SET kyc_tier=MAX(kyc_tier,2), kyc_status='verified_full', kyc_reviewed_at=? WHERE id=?`).run(now(), userId);
+    return ok({ userId, status: 'verified_full', tier: 2 });
+  }
+  db.prepare(`UPDATE users SET kyc_status='rejected', kyc_reviewed_at=? WHERE id=?`).run(now(), userId);
+  return ok({ userId, status: 'rejected' });
+}
 
 // ---------- money ----------
 function enforceSendLimit(u, amountCents) {
@@ -168,7 +231,7 @@ export async function cashin(userId, { amountCents, idempotencyKey }) {
     return err(403, 'hold_limit', `Wallet hold limit is B$${(lim.holdMax/100).toFixed(0)} on Tier ${u.kyc_tier}.`);
   }
   // Bridge external Sand Dollar funds in, then credit the wallet from treasury (real double-entry).
-  const r = await rail.cashIn(u.rail_account_id, amountCents);
+  const r = await rail.cashIn(u.rail_account_id, amountCents, u.account_id);
   if (!r.ok) return err(502, 'rail_error', 'Sand Dollar cash-in failed');
   const fee = feeFor('cashin', amountCents);
   const txn = postTransfer({ fromId: 'treasury', toId: u.account_id, amountCents, kind: 'cashin', memo: 'Cash in · Sand Dollar', railRef: r.ref, idempotencyKey,
@@ -184,7 +247,7 @@ export async function cashout(userId, { amountCents, idempotencyKey }) {
     const fee = feeFor('cashout', amountCents);
     const txn = postTransfer({ fromId: u.account_id, toId: 'treasury', amountCents, kind: 'cashout', memo: 'Cash out · Sand Dollar', idempotencyKey,
       feeCents: fee.cents, feePayer: u.account_id, feeAccount: REVENUE_ACCOUNT });
-    const r = await rail.cashOut(u.rail_account_id, amountCents);
+    const r = await rail.cashOut(u.rail_account_id, amountCents, u.account_id);
     if (!r.ok) throw new Error('rail cashout failed');
     return ok({ txn: { id: txn.id, ref: txn.rail_ref }, fee: fee.cents, balance: balanceOf(u.account_id) });
   } catch (e) {
