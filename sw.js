@@ -1,5 +1,5 @@
 // sw.js — offline cache for static assets only. API calls always hit the network.
-const CACHE = 'caribe-v12';
+const CACHE = 'caribe-v13';
 const ASSETS = [
   './','./index.html','./css/app.css',
   './js/app.js','./js/ui.js','./js/store.js','./js/api.js','./assets/qrcode.js',

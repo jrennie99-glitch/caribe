@@ -278,6 +278,8 @@ body{
 .chatsend{background:linear-gradient(135deg,var(--sea),var(--aqua));color:#fff}
 .chatsend svg{width:20px;height:20px}
 .chatmoney{background:var(--sand);font-size:18px}
+.chatimg{max-width:220px;max-height:280px;border-radius:14px;display:block;background:var(--card-2)}
+.chataud{height:42px;max-width:240px}
 .unread{display:inline-block;background:var(--coral);color:#fff;font-size:11px;font-weight:700;min-width:18px;height:18px;border-radius:9px;text-align:center;line-height:18px;padding:0 5px}
 
 /* guided tutorial (coachmarks) */

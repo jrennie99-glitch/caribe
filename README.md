@@ -27,8 +27,8 @@ Want a public link to text someone? `brew install cloudflared && npm run live`.
 
 ## What it does (all real, no mocks)
 
-- **Messaging** — real-time 1:1 + group chat (Server-Sent Events, no polling), with
-  **send-money-in-chat** tied to the wallet.
+- **Messaging** — real-time 1:1 + group chat (Server-Sent Events, no polling), with **photos, voice
+  notes, and send-money-in-chat**.
 - **Voice & video calls** — WebRTC (STUN out of the box; set `TURN_*` env for full NAT
   coverage). Audio/video, mute, camera toggle, incoming-call accept/decline.
 - **Proof-of-reserve** — verify your funds are 100% backed (per-currency conservation), in-app. No bank shows you this.

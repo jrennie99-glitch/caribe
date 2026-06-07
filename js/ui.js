@@ -809,6 +809,8 @@ function lastPreview(m){
   if(!m) return 'No messages yet';
   const mine=m.senderAccount===store.get().user.accountId;
   if(m.kind==='payment') return '💸 '+SYM+store.fmt(m.amount);
+  if(m.kind==='image') return (mine?'You: ':'')+'📷 Photo';
+  if(m.kind==='voice') return (mine?'You: ':'')+'🎤 Voice message';
   if(m.kind==='system') return m.body||'';
   return (mine?'You: ':'')+(m.body||'');
 }
@@ -842,6 +844,8 @@ function bubble(m){
   const mine=m.senderAccount===store.get().user.accountId;
   if(m.kind==='system') return `<div class="syswrap"><span class="sysmsg">${escapeHtml(m.body)}</span></div>`;
   if(m.kind==='payment') return `<div class="bub ${mine?'me':'them'}" data-mid="${m.id}"><div class="paybub">💸 ${SYM}${store.fmt(m.amount)}<div class="paysub">${mine?'You sent':'Received'}</div></div></div>`;
+  if(m.kind==='image') return `<div class="bub ${mine?'me':'them'}" data-mid="${m.id}"><img class="chatimg" src="${encodeURI(m.body||'')}" loading="lazy"></div>`;
+  if(m.kind==='voice') return `<div class="bub ${mine?'me':'them'}" data-mid="${m.id}"><audio class="chataud" controls src="${encodeURI(m.body||'')}"></audio></div>`;
   return `<div class="bub ${mine?'me':'them'}" data-mid="${m.id}"><div class="msg">${escapeHtml(m.body)}</div></div>`;
 }
 function appendMessage(m){
@@ -861,7 +865,7 @@ async function renderConversation(convId){
       ${(meta.kind==='direct'&&meta.peerAccount)?`<div class="callicon" id="voicecall">📞</div><div class="callicon" id="videocall">🎥</div>`:''}</div>
     <div class="screen chatscroll" id="msgs">${msgs.map(bubble).join('')}</div>
     <div class="chatbar">
-      <button class="chatmoney" id="cmoney" title="Send money">💵</button>
+      <button class="chatmoney" id="cplus" title="Send photo, voice or money">＋</button>
       <input id="cinput" placeholder="Message…" autocomplete="off" enterkeyhint="send">
       <button class="chatsend" id="csend">${icon('send')}</button>
     </div>`;
@@ -871,7 +875,7 @@ async function renderConversation(convId){
     try{ const r=await api.chatSend({conversationId:convId,text:t}); appendMessage(r.message); }catch(e){ i.value=t; } };
   document.getElementById('csend').onclick=send;
   document.getElementById('cinput').onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } };
-  document.getElementById('cmoney').onclick=()=>chatMoney(convId);
+  document.getElementById('cplus').onclick=()=>chatPlus(convId);
   const vc=document.getElementById('voicecall'); if(vc) vc.onclick=()=>startCall(meta.peerAccount, meta.title, false);
   const vd=document.getElementById('videocall'); if(vd) vd.onclick=()=>startCall(meta.peerAccount, meta.title, true);
   api.chatRead({conversationId:convId}).catch(()=>{});
@@ -881,6 +885,39 @@ function chatMoney(convId){
     await doMoney(()=>api.chatMoney({conversationId:convId,amountCents:cents,idempotencyKey:newKey()}).then(r=>{ if(r&&r.message) appendMessage(r.message); return r; }),
       'Sent', (res)=> res&&res.crossBorder?`${SYM}${store.fmt(cents)} → ${symFor(res.dstCurrency)}${store.fmt(res.dstAmount)}`:`${SYM}${store.fmt(cents)} sent in chat`);
   },{feeKind:'transfer'});
+}
+const blobToDataUrl=(blob)=>new Promise(r=>{ const fr=new FileReader(); fr.onload=()=>r(fr.result); fr.readAsDataURL(blob); });
+function chatPlus(convId){
+  openSheet(`<h2>Send</h2><div class="grid" style="margin:10px 0 0;grid-template-columns:repeat(3,1fr)">
+    <div class="mini" id="opt-photo"><div class="ic">📷</div><div class="t">Photo</div></div>
+    <div class="mini" id="opt-voice"><div class="ic">🎤</div><div class="t">Voice</div></div>
+    <div class="mini" id="opt-money"><div class="ic">💵</div><div class="t">Money</div></div></div>`);
+  $('#opt-photo').onclick=()=>{ closeSheet(); pickImage(convId); };
+  $('#opt-voice').onclick=()=>{ closeSheet(); recordVoice(convId); };
+  $('#opt-money').onclick=()=>{ closeSheet(); chatMoney(convId); };
+}
+function pickImage(convId){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
+  inp.onchange=()=>{ const f=inp.files[0]; if(!f) return; const fr=new FileReader();
+    fr.onload=async()=>{ try{ const r=await api.chatMedia({conversationId:convId,kind:'image',dataBase64:fr.result}); appendMessage(r.message); }catch(e){ toast(e.message||'Upload failed'); } };
+    fr.readAsDataURL(f); };
+  inp.click();
+}
+async function recordVoice(convId){
+  if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder)) return toast('Voice recording not supported here.');
+  let stream; try{ stream=await navigator.mediaDevices.getUserMedia({audio:true}); }catch{ return toast('Mic blocked'); }
+  const rec=new MediaRecorder(stream); const chunks=[]; let cancelled=false, secs=0;
+  rec.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
+  const bg=openSheet(`<div class="center"><div style="font-size:40px">🎙️</div><h2 style="margin:8px 0 4px">Recording…</h2>
+    <p class="lead" id="rectime">0:00</p><button class="btn" id="recstop">Stop &amp; send</button>
+    <button class="btn ghost" id="reccancel" style="margin-top:8px">Cancel</button></div>`);
+  const tm=setInterval(()=>{ secs++; const e=$('#rectime',bg); if(e) e.textContent='0:'+String(secs).padStart(2,'0'); },1000);
+  rec.onstop=async()=>{ clearInterval(tm); stream.getTracks().forEach(t=>t.stop()); if(cancelled) return;
+    const blob=new Blob(chunks,{type:rec.mimeType||'audio/webm'}); const b64=await blobToDataUrl(blob);
+    try{ const r=await api.chatMedia({conversationId:convId,kind:'voice',dataBase64:b64}); appendMessage(r.message); }catch(e){ toast('Voice failed'); } };
+  $('#recstop',bg).onclick=()=>{ closeSheet(); rec.stop(); };
+  $('#reccancel',bg).onclick=()=>{ cancelled=true; rec.stop(); closeSheet(); };
+  rec.start();
 }
 
 // ---------- Moments (social feed) ----------

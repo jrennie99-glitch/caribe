@@ -47,6 +47,7 @@ export const api = {
   chatList:     ()  => request('GET',  '/chat/list'),
   chatMessages: (convId, after = 0) => request('GET', '/chat/messages?conversationId=' + encodeURIComponent(convId) + '&after=' + after),
   chatSend:     (b) => request('POST', '/chat/send', b),
+  chatMedia:    (b) => request('POST', '/chat/media', b),
   chatRead:     (b) => request('POST', '/chat/read', b),
   chatMoney:    (b) => request('POST', '/chat/money', b),
   feed:         ()  => request('GET',  '/feed'),

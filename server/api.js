@@ -453,6 +453,20 @@ export async function chatMessages(userId, _b, query) {
   chat.markRead(convId, u.account_id);
   return ok({ messages: chat.messages(convId, after) });
 }
+export async function chatMedia(userId, { conversationId, kind, dataBase64 } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  if (!conversationId || !chat.isMember(conversationId, u.account_id)) return err(403, 'not_member');
+  if (!['image', 'voice'].includes(kind)) return err(400, 'bad_kind');
+  if (typeof dataBase64 !== 'string') return err(400, 'no_data');
+  const re = kind === 'image' ? /^data:image\/(png|jpe?g|webp|gif);base64,(.+)$/ : /^data:audio\/(webm|ogg|mp4|mpeg|wav);base64,(.+)$/;
+  const m = dataBase64.match(re); if (!m) return err(400, 'bad_data', 'Unsupported media');
+  const ext = kind === 'image' ? (m[1] === 'jpeg' ? 'jpg' : m[1]) : (m[1] === 'mpeg' ? 'mp3' : m[1]);
+  const buf = Buffer.from(m[2], 'base64');
+  if (buf.length < 200) return err(400, 'empty'); if (buf.length > 6 * 1024 * 1024) return err(413, 'too_large', 'Max 6MB');
+  const fname = `m_${kind}_${u.id}_${now()}.${ext}`;
+  writeFileSync(join(UPLOAD_DIR, fname), buf);
+  return ok({ message: chat.send(conversationId, u.account_id, { kind, body: '/media/' + fname }) });
+}
 export async function chatSend(userId, { conversationId, text } = {}) {
   const u = userById.get(userId); if (!u) return err(401, 'no_user');
   if (!conversationId || !chat.isMember(conversationId, u.account_id)) return err(403, 'not_member');

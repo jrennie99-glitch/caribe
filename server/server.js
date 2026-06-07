@@ -2,7 +2,7 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, normalize, extname } from 'node:path';
+import { dirname, join, normalize, extname, basename } from 'node:path';
 import { config, isProd } from './config.js';
 import { db, seed } from './db.js';
 import { verifyToken, adminKey } from './auth.js';
@@ -16,12 +16,24 @@ const PORT = config.port;
 
 seed();
 
+const UPLOAD_DIR = process.env.UPLOAD_DIR || join(__dirname, 'uploads');
 const MIME = {
   '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8',
   '.css':'text/css; charset=utf-8', '.json':'application/json; charset=utf-8',
   '.webmanifest':'application/manifest+json', '.svg':'image/svg+xml',
   '.png':'image/png', '.ico':'image/x-icon', '.woff2':'font/woff2',
+  '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.gif':'image/gif',
+  '.webm':'audio/webm', '.ogg':'audio/ogg', '.mp3':'audio/mpeg', '.mp4':'audio/mp4', '.wav':'audio/wav',
 };
+async function handleMedia(req, res, url) {
+  const name = basename(decodeURIComponent(url.pathname.slice('/media/'.length)));
+  if (!name || name.includes('..')) { res.writeHead(403); return res.end(); }
+  try {
+    const data = await readFile(join(UPLOAD_DIR, name));
+    res.writeHead(200, { 'content-type': MIME[extname(name)] || 'application/octet-stream', 'cache-control': 'private, max-age=86400' });
+    res.end(data);
+  } catch { res.writeHead(404); res.end('not found'); }
+}
 
 // long-cache fingerprintable static assets; HTML/SW always revalidate
 const cacheControl = (p) =>
@@ -106,6 +118,7 @@ const ROUTES = [
   ['GET',  '/api/chat/list',    (uid)    => api.chatList(uid),     true ],
   ['GET',  '/api/chat/messages',(uid,b,q)=> api.chatMessages(uid, b, q), true ],
   ['POST', '/api/chat/send',    (uid, b) => api.chatSend(uid, b),  true ],
+  ['POST', '/api/chat/media',   (uid, b) => api.chatMedia(uid, b), true ],
   ['POST', '/api/chat/read',    (uid, b) => api.chatRead(uid, b),  true ],
   ['POST', '/api/chat/money',   (uid, b) => api.chatSendMoney(uid, b), true ],
   ['POST', '/api/feed/post',    (uid, b) => api.feedPost(uid, b),    true ],
@@ -197,6 +210,7 @@ const server = http.createServer(async (req, res) => {
   });
 
   if (url.pathname === '/healthz') return send(res, 200, { ok: true });
+  if (url.pathname.startsWith('/media/')) return handleMedia(req, res, url);
   if (url.pathname === '/api/chat/stream') return handleStream(req, res, url);
   if (url.pathname.startsWith('/api/')) return handleApi(req, res, url, ip);
   return handleStatic(req, res, url);
