@@ -7,7 +7,10 @@
   "scripts": {
     "start": "node --no-warnings server/server.js",
     "dev": "node --no-warnings --watch server/server.js",
-    "reset": "rm -f server/caribe.db && echo 'database reset'"
+    "reset": "rm -f server/caribe.db && echo 'database reset'",
+    "live": "bash scripts/go-live.sh"
   },
-  "engines": { "node": ">=22.5" }
+  "engines": {
+    "node": ">=22.5"
+  }
 }

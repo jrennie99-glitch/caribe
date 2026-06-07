@@ -12,6 +12,20 @@ Two honest layers of "production-ready":
 
 ---
 
+## 0. Instant public link (no account, ~10 seconds) — for demos
+
+Get a shareable HTTPS link off your own machine, zero setup:
+
+```bash
+brew install cloudflared   # one time
+npm run live
+```
+
+It prints a `https://<random>.trycloudflare.com` URL. Text it to anyone — the Demo button,
+camera QR, cross-island send, all work (real HTTPS = secure context). The link is live
+while the command runs on your Mac; Ctrl+C stops it. The URL changes each run. Use this to
+show people today; use the Docker deploy below for a permanent address.
+
 ## 1. Generate secrets
 
 ```bash
