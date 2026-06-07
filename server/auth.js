@@ -3,12 +3,14 @@ import { scryptSync, randomBytes, timingSafeEqual, createHmac } from 'node:crypt
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { config, isProd } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SECRET_FILE = join(__dirname, '.secret');
 
-// Persisted signing secret so tokens survive restarts.
+// Signing secret: env in production (config enforces it); dev falls back to a local file.
 function loadSecret() {
+  if (config.tokenSecret) return config.tokenSecret;
   if (existsSync(SECRET_FILE)) return readFileSync(SECRET_FILE, 'utf8').trim();
   const s = randomBytes(48).toString('hex');
   writeFileSync(SECRET_FILE, s, { mode: 0o600 });
@@ -20,6 +22,7 @@ const TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
 // Admin key for KYC review (real, persisted; printed at server start).
 const ADMIN_FILE = join(__dirname, '.admin');
 export function adminKey() {
+  if (config.adminKey) return config.adminKey;
   if (existsSync(ADMIN_FILE)) return readFileSync(ADMIN_FILE, 'utf8').trim();
   const k = randomBytes(18).toString('hex');
   writeFileSync(ADMIN_FILE, k, { mode: 0o600 });

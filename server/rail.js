@@ -64,9 +64,12 @@ export class SandDollarRail extends BaseRail {
   async cashOut() { throw new Error('SandDollarRail.cashOut: wire to CBOB API'); }
 }
 
-// Active rail. To go live on the real network:
-//   export const rail = new SandDollarRail({ baseUrl: process.env.SD_BASE_URL, apiKey: process.env.SD_API_KEY });
-export const rail = new SettlementRail();
+// Active rail: the real Sand Dollar network when Central Bank credentials are present
+// (SD_BASE_URL + SD_API_KEY), otherwise the internal settlement engine.
+import { config } from './config.js';
+export const rail = (config.rail.baseUrl && config.rail.apiKey)
+  ? new SandDollarRail({ baseUrl: config.rail.baseUrl, apiKey: config.rail.apiKey })
+  : new SettlementRail();
 
 export function settlementStats() {
   const row = db.prepare(`SELECT COUNT(*) cnt,

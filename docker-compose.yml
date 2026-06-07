@@ -1,0 +1,37 @@
+services:
+  app:
+    build: .
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      TRUST_PROXY: "true"
+      TOKEN_SECRET: ${TOKEN_SECRET:?set TOKEN_SECRET in .env}
+      ADMIN_KEY: ${ADMIN_KEY:?set ADMIN_KEY in .env}
+      SD_BASE_URL: ${SD_BASE_URL:-}
+      SD_API_KEY: ${SD_API_KEY:-}
+      DB_PATH: /data/caribe.db
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - caribe-data:/data
+    restart: unless-stopped
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  caribe-data:
+  caddy-data:
+  caddy-config:

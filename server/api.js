@@ -10,7 +10,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-const UPLOAD_DIR = join(dirname(fileURLToPath(import.meta.url)), 'uploads');
+const UPLOAD_DIR = process.env.UPLOAD_DIR || join(dirname(fileURLToPath(import.meta.url)), 'uploads');
 mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // real age check from an ISO date string (YYYY-MM-DD)
@@ -104,9 +104,21 @@ export async function register({ name, phone, pin, role, business, category, dob
   return ok({ token: issueToken(userId), user: publicUser(u) });
 }
 
+const MAX_FAILS = 5, LOCK_MS = 15 * 60 * 1000;
 export async function login({ phone, pin }) {
   const u = userByPhone.get((phone || '').trim());
-  if (!u || !verifyPin(String(pin || ''), u.pin_hash)) return err(401, 'bad_credentials', 'Wrong phone or PIN');
+  if (!u) return err(401, 'bad_credentials', 'Wrong phone or PIN');
+  if (u.locked_until && u.locked_until > now()) {
+    const mins = Math.ceil((u.locked_until - now()) / 60000);
+    return err(423, 'locked', `Too many attempts. Try again in ${mins} min.`);
+  }
+  if (!verifyPin(String(pin || ''), u.pin_hash)) {
+    const fails = (u.failed_attempts || 0) + 1;
+    const lock = fails >= MAX_FAILS ? now() + LOCK_MS : null;
+    db.prepare(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`).run(fails, lock, u.id);
+    return err(401, 'bad_credentials', lock ? 'Locked for 15 min after too many attempts' : 'Wrong phone or PIN');
+  }
+  if (u.failed_attempts) db.prepare(`UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=?`).run(u.id);
   return ok({ token: issueToken(u.id), user: publicUser(u) });
 }
 

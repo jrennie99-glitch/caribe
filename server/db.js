@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { islandByCurrency } from './islands.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-export const db = new DatabaseSync(join(__dirname, 'caribe.db'));
+export const db = new DatabaseSync(process.env.DB_PATH || join(__dirname, 'caribe.db'));
 
 // Pragmas for integrity + concurrency.
 db.exec(`PRAGMA journal_mode = WAL;`);
@@ -97,6 +97,8 @@ function migrate() {
   if (!hasColumn('users', 'kyc_status'))         db.exec(`ALTER TABLE users ADD COLUMN kyc_status TEXT NOT NULL DEFAULT 'verified_basic'`);
   if (!hasColumn('users', 'id_doc_path'))        db.exec(`ALTER TABLE users ADD COLUMN id_doc_path TEXT`);
   if (!hasColumn('users', 'kyc_reviewed_at'))    db.exec(`ALTER TABLE users ADD COLUMN kyc_reviewed_at INTEGER`);
+  if (!hasColumn('users', 'failed_attempts'))    db.exec(`ALTER TABLE users ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0`);
+  if (!hasColumn('users', 'locked_until'))       db.exec(`ALTER TABLE users ADD COLUMN locked_until INTEGER`);
   if (!hasColumn('accounts', 'currency'))        db.exec(`ALTER TABLE accounts ADD COLUMN currency TEXT NOT NULL DEFAULT 'BSD'`);
   if (!hasColumn('accounts', 'island'))          db.exec(`ALTER TABLE accounts ADD COLUMN island TEXT NOT NULL DEFAULT 'BS'`);
   // Caribe's revenue account — where all fees land. Exists on every database.
