@@ -376,6 +376,11 @@ function renderHome(){
       <div class="av" style="background:linear-gradient(135deg,var(--violet),var(--sea))">✨</div>
       <div class="m"><div class="n">Ask Caribe</div><div class="s">Send money or check spending, just by asking</div></div>
       <div class="chev">${icon('chev')}</div></div></div>
+    <div class="card" data-reqsplit style="margin:10px 18px 0"><div class="row">
+      <div class="av" style="background:var(--gold)">🧾</div>
+      <div class="m"><div class="n">Request or split</div><div class="s">Ask to be paid back, or split a bill</div></div>
+      <div class="chev">${icon('chev')}</div></div></div>
+    <div id="reqslot"></div>
     <div class="sec"><h3>People</h3><span class="muted" style="margin-left:auto;font-size:12px">tap to send</span></div>
     <div class="card">${
       s.contacts.length? s.contacts.map(c=>`<div class="row" data-send="${c.id}">${avatar(c.name,c.color)}
@@ -391,6 +396,8 @@ function renderHome(){
   app().querySelectorAll('[data-send]').forEach(n=>n.onclick=()=>sendTo(n.dataset.send));
   app().querySelectorAll('[data-tab]').forEach(n=>n.onclick=()=>{tab=n.dataset.tab;render();});
   const ask=app().querySelector('[data-ask]'); if(ask) ask.onclick=()=>askCaribe();
+  const rs=app().querySelector('[data-reqsplit]'); if(rs) rs.onclick=()=>requestOrSplit();
+  loadHomeRequests();
   countUp($('#balnum'), store.balance());
 }
 
@@ -469,6 +476,7 @@ function renderMe(){
       <div class="row" style="cursor:default"><div class="av" style="background:#2fd9c5">🏦</div><div class="m"><div class="n">Sand Dollar account</div><div class="s">${u.railAccountId||'—'}</div></div></div>
       <div class="row" data-cashout><div class="av" style="background:#f5b53d">🏧</div><div class="m"><div class="n">Cash out</div><div class="s">Withdraw to Sand Dollar</div></div><div class="chev">${icon('chev')}</div></div>
       <div class="row" data-insights><div class="av" style="background:#1296c4">📊</div><div class="m"><div class="n">Spending insights</div><div class="s">Where your money goes</div></div><div class="chev">${icon('chev')}</div></div>
+      <div class="row" data-reserve><div class="av" style="background:#1fb87a">🛡️</div><div class="m"><div class="n">Money safety</div><div class="s">Proof your funds are 100% backed</div></div><div class="chev">${icon('chev')}</div></div>
       <div class="row" data-ask2><div class="av" style="background:linear-gradient(135deg,var(--violet),var(--sea))">✨</div><div class="m"><div class="n">Ask Caribe</div><div class="s">Your money assistant</div></div><div class="chev">${icon('chev')}</div></div>
       <div class="row" data-tutorial><div class="av" style="background:#7c5cff">🎓</div><div class="m"><div class="n">Replay tutorial</div><div class="s">A quick tour of how Caribe works</div></div><div class="chev">${icon('chev')}</div></div>
     </div>
@@ -479,6 +487,7 @@ function renderMe(){
   const kc=app().querySelector('[data-kyc]'); if(kc) kc.onclick=()=>kycUpload();
   const tt=app().querySelector('[data-tutorial]'); if(tt) tt.onclick=()=>startTutorial();
   const ins=app().querySelector('[data-insights]'); if(ins) ins.onclick=()=>{tab='insights';render();};
+  const rsv=app().querySelector('[data-reserve]'); if(rsv) rsv.onclick=()=>{tab='reserve';render();};
   const a2=app().querySelector('[data-ask2]'); if(a2) a2.onclick=()=>askCaribe();
 }
 function kycLabel(u){
@@ -939,6 +948,66 @@ function buyItem(productId,name,price){
   });
 }
 
+// ---------- proof of reserve ----------
+async function renderReserve(){
+  let d; try{ d=await api.reserve(); }catch{ d={conserved:false,currencies:[]}; }
+  screen(`<div class="backrow" data-back="me">‹ Me</div>
+    <div class="hero" style="background:radial-gradient(120% 120% at 90% -10%,rgba(95,230,181,.5),transparent 55%),linear-gradient(135deg,var(--ok),#0a8f63)">
+      <div class="label">Your money is protected</div>
+      <div class="bal" style="font-size:30px">${d.conserved?'100% backed ✓':'Verifying…'}</div>
+      <div class="sub"><span class="dot"></span> every wallet · every currency</div></div>
+    <div class="sec"><h3>Customer funds held</h3></div>
+    <div class="card">${d.currencies.length? d.currencies.map(c=>`<div class="row" style="cursor:default"><div class="av" style="background:#1fb87a">${(c.symbol||'$').trim()||'$'}</div>
+      <div class="m"><div class="n">${c.symbol}${store.fmt(c.customerHeld)} in ${c.currency} wallets</div><div class="s">${c.backed?'fully backed in reserve ✓':'⚠ discrepancy'}</div></div></div>`).join('')
+      : '<div class="row" style="cursor:default"><div class="m"><div class="s">No funds yet.</div></div></div>'}</div>
+    <p class="note">Caribe's ledger is double-entry: in every currency, all balances sum to exactly <b>zero</b> — so every dollar in a wallet is matched in reserve. Verify it yourself anytime at <b>/api/health</b>. No bank shows you this.</p>`);
+  app().querySelectorAll('[data-back]').forEach(n=>n.onclick=()=>{tab=n.dataset.back;render();});
+}
+
+// ---------- requests + split ----------
+function requestOrSplit(){
+  openSheet(`<h2>Request or split</h2><p class="lead">Get paid back, the easy way</p>
+    <button class="btn" id="rqmoney" style="margin-bottom:10px">Request money from someone</button>
+    <button class="btn ghost" id="rqsplit">Split a bill with friends</button>`);
+  $('#rqmoney').onclick=()=>{ closeSheet(); requestFlow(); };
+  $('#rqsplit').onclick=()=>{ closeSheet(); splitFlow(); };
+}
+function requestFlow(){
+  const s=store.get();
+  openSheet(`<h2>Request money</h2><p class="lead">From whom?</p>
+    <div style="max-height:55vh;overflow:auto">${s.contacts.filter(c=>!c.currency||c.currency===s.user.currency).map(c=>`<div class="row" data-rc="${c.id}|${encodeURIComponent(c.name)}">${avatar(c.name,c.color)}<div class="m"><div class="n">${c.name}</div></div><div class="chev">${icon('chev')}</div></div>`).join('')||'<p class="note">No same-island contacts.</p>'}</div>`);
+  document.querySelectorAll('[data-rc]').forEach(n=>n.onclick=()=>{ const [id,nm]=n.dataset.rc.split('|'); const name=decodeURIComponent(nm);
+    amountEntry(`Request from ${name}`,'They get a request to pay you','Request',async(cents,memo)=>{ const go=$('#go'); if(go){go.disabled=true;go.textContent='Sending…';}
+      try{ await api.requestMoney({toAccountId:id,amountCents:cents,memo}); closeSheet(); successSheet('Request sent',`Asked ${name} for ${SYM}${store.fmt(cents)}`);}catch(e){ if(go) shake('go',e.message||'Try again'); } },{memoPh:'what for?'}); });
+}
+function splitFlow(){
+  const s=store.get(); const picked=new Set();
+  const bg=openSheet(`<h2>Split a bill</h2><p class="lead">Everyone (including you) pays an equal share</p>
+    <div class="field" style="margin:6px 0"><label>Total amount</label><input id="splittot" inputmode="decimal" placeholder="60.00"></div>
+    <div class="field" style="margin:6px 0"><label>Note</label><input id="splitmemo" placeholder="Dinner at Goldie's"></div>
+    <label style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin:10px 18px 4px">Split with</label>
+    <div style="max-height:28vh;overflow:auto;margin:0 6px">${s.contacts.filter(c=>!c.currency||c.currency===s.user.currency).map(c=>`<div class="row" data-sp="${c.id}">${avatar(c.name,c.color)}<div class="m"><div class="n">${c.name}</div></div><div class="soucheck" data-for="${c.id}">○</div></div>`).join('')}</div>
+    <div id="splitcalc" class="feeline">&nbsp;</div>
+    <button class="btn" id="splitgo" style="margin-top:6px">Send requests</button>`);
+  const recalc=()=>{ const tot=Math.round(parseFloat($('#splittot',bg).value||'0')*100); const el=$('#splitcalc',bg); el.textContent=(tot>0&&picked.size)?`Each pays ${SYM}${store.fmt(Math.round(tot/(picked.size+1)))} · ${picked.size+1} people`:''; };
+  bg.querySelectorAll('[data-sp]').forEach(n=>n.onclick=()=>{ const id=n.dataset.sp; const c=bg.querySelector(`.soucheck[data-for="${id}"]`); if(picked.has(id)){picked.delete(id);c.textContent='○';c.style.color='';}else{picked.add(id);c.textContent='●';c.style.color='var(--sea)';} recalc(); });
+  $('#splittot',bg).oninput=recalc;
+  $('#splitgo',bg).onclick=async()=>{ const tot=Math.round(parseFloat($('#splittot',bg).value||'0')*100); const memo=$('#splitmemo',bg).value.trim(); if(!tot||!picked.size) return shake('splitgo','Amount + people'); const b=$('#splitgo',bg); b.disabled=true; b.textContent='Sending…';
+    try{ const r=await api.splitBill({amountCents:tot,participantIds:[...picked],memo}); closeSheet(); successSheet('Bill split',`${r.count} request(s) sent · ${SYM}${store.fmt(r.share)} each`);}catch(e){ b.disabled=false; b.textContent=e.message||'Try again'; } };
+}
+function loadHomeRequests(){
+  api.requests().then(d=>{ const slot=document.getElementById('reqslot'); if(!slot) return; const inc=d.incoming||[];
+    if(!inc.length){ slot.innerHTML=''; return; }
+    slot.innerHTML=`<div class="sec"><h3>Requests for you</h3><span class="badge">${inc.length}</span></div>
+      <div class="card">${inc.map(r=>`<div class="row"><div class="av" style="background:var(--gold)">🧾</div>
+        <div class="m"><div class="n">${escapeHtml(r.requester)} · ${r.symbol}${store.fmt(r.amount)}</div><div class="s">${escapeHtml(r.memo||'requested')}</div></div>
+        <div style="display:flex;gap:6px;align-items:center"><span data-rdec="${r.id}" style="color:var(--muted);cursor:pointer;font-weight:700;padding:8px">✕</span>
+        <button class="btn" style="width:auto;padding:9px 14px" data-rpay="${r.id}">Pay</button></div></div>`).join('')}</div>`;
+    slot.querySelectorAll('[data-rpay]').forEach(n=>n.onclick=async()=>{ n.disabled=true; try{ await api.payRequest({id:n.dataset.rpay,idempotencyKey:newKey()}); await store.refresh(); render(); }catch(e){ n.disabled=false; toast(e.message||'Could not pay'); } });
+    slot.querySelectorAll('[data-rdec]').forEach(n=>n.onclick=async()=>{ await api.declineRequest({id:n.dataset.rdec}).catch(()=>{}); render(); });
+  }).catch(()=>{});
+}
+
 // ---------- Sou-Sou (digital partner-hand) ----------
 async function renderSousou(){
   let list=[]; try{ list=(await api.sousouList()).sousous; }catch{}
@@ -1077,6 +1146,7 @@ export async function render(){
   if(tab==='store') return renderStore();
   if(tab==='insights') return renderInsights();
   if(tab==='sousou') return renderSousou();
+  if(tab==='reserve') return renderReserve();
   const merchant=store.get().user.accountKind==='merchant';
   if(merchant){
     if(tab==='activity') return renderActivity();

@@ -148,6 +148,13 @@ function migrate() {
   db.exec(`CREATE TABLE IF NOT EXISTS sousou_contributions (
     id TEXT PRIMARY KEY, sousou_id TEXT NOT NULL, round INTEGER NOT NULL, account_id TEXT NOT NULL,
     txn_id TEXT, created_at INTEGER NOT NULL, UNIQUE(sousou_id, round, account_id))`);
+  // Payment requests + bill splitting
+  db.exec(`CREATE TABLE IF NOT EXISTS payment_requests (
+    id TEXT PRIMARY KEY, requester_account TEXT NOT NULL, payer_account TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL, currency TEXT NOT NULL, memo TEXT,
+    status TEXT NOT NULL DEFAULT 'pending', group_id TEXT, created_at INTEGER NOT NULL)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_req_payer ON payment_requests(payer_account, status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_req_requester ON payment_requests(requester_account)`);
 }
 migrate();
 

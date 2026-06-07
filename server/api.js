@@ -196,6 +196,74 @@ export async function demo() {
   return ok({ token: issueToken(u.id), user: publicUser(userById.get(u.id)) });
 }
 
+// ---------- proof of reserve (verifiable backing) ----------
+export async function reserve(userId) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const rows = db.prepare(`SELECT currency, COALESCE(SUM(CASE WHEN kind!='treasury' THEN balance_cents ELSE 0 END),0) held FROM accounts GROUP BY currency`).all();
+  const cc = currencyConservation();
+  return ok({
+    conserved: cc.conserved,
+    currencies: rows.filter(r => r.held > 0).map(r => ({
+      currency: r.currency, symbol: symbolFor(r.currency), customerHeld: r.held,
+      backed: cc.byCurrency[r.currency] ? cc.byCurrency[r.currency].net === 0 : true,
+    })),
+  });
+}
+
+// ---------- payment requests + bill splitting ----------
+function reqShape(r, viewer) {
+  const reqA = accountById.get(r.requester_account), payA = accountById.get(r.payer_account);
+  return { id: r.id, amount: r.amount_cents, symbol: symbolFor(r.currency), memo: r.memo, status: r.status,
+    requester: reqA?.name, payer: payA?.name, mine: r.requester_account === viewer, created: r.created_at };
+}
+export async function requestMoney(userId, { toAccountId, amountCents, memo } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const me = accountById.get(u.account_id), payer = accountById.get(toAccountId);
+  if (!payer) return err(404, 'no_payer'); if (payer.id === me.id) return err(400, 'self');
+  if (payer.currency !== me.currency) return err(400, 'currency', 'Requests must be same-currency');
+  if (!Number.isInteger(amountCents) || amountCents <= 0) return err(400, 'amount');
+  const id = 'req_' + uuid().slice(0, 10);
+  db.prepare(`INSERT INTO payment_requests (id,requester_account,payer_account,amount_cents,currency,memo,status,created_at) VALUES (?,?,?,?,?,?,'pending',?)`)
+    .run(id, me.id, payer.id, amountCents, me.currency, (memo || '').slice(0, 140), now());
+  return ok({ id });
+}
+export async function splitBill(userId, { amountCents, participantIds, memo } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const me = accountById.get(u.account_id);
+  let ids = (Array.isArray(participantIds) ? participantIds : []).filter(x => { const a = accountById.get(x); return a && a.currency === me.currency && a.id !== me.id; });
+  ids = [...new Set(ids)];
+  if (!ids.length) return err(400, 'members', 'Pick people to split with');
+  if (!Number.isInteger(amountCents) || amountCents <= 0) return err(400, 'amount');
+  const share = Math.round(amountCents / (ids.length + 1)); // everyone incl. you splits equally
+  const gid = 'split_' + uuid().slice(0, 8), t = now();
+  const ins = db.prepare(`INSERT INTO payment_requests (id,requester_account,payer_account,amount_cents,currency,memo,status,group_id,created_at) VALUES (?,?,?,?,?,?,'pending',?,?)`);
+  ids.forEach(pid => ins.run('req_' + uuid().slice(0, 10), me.id, pid, share, me.currency, '🧾 ' + (memo || 'Split bill'), gid, t));
+  return ok({ share, count: ids.length, yourShare: share });
+}
+export async function requestsList(userId) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const incoming = db.prepare(`SELECT * FROM payment_requests WHERE payer_account=? AND status='pending' ORDER BY created_at DESC`).all(u.account_id);
+  const outgoing = db.prepare(`SELECT * FROM payment_requests WHERE requester_account=? ORDER BY created_at DESC LIMIT 20`).all(u.account_id);
+  return ok({ incoming: incoming.map(r => reqShape(r, u.account_id)), outgoing: outgoing.map(r => reqShape(r, u.account_id)) });
+}
+export async function payRequest(userId, { id, idempotencyKey } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const r = db.prepare(`SELECT * FROM payment_requests WHERE id=?`).get(id);
+  if (!r) return err(404, 'no_request'); if (r.payer_account !== u.account_id) return err(403, 'not_yours');
+  if (r.status !== 'pending') return err(400, 'done', 'Already handled');
+  const res = await move(userId, { toId: r.requester_account, amountCents: r.amount_cents, memo: r.memo, kind: 'transfer', idempotencyKey });
+  if (res.status !== 200) return res;
+  db.prepare(`UPDATE payment_requests SET status='paid' WHERE id=?`).run(id);
+  return ok({ paid: true, balance: res.body.balance });
+}
+export async function declineRequest(userId, { id } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const r = db.prepare(`SELECT * FROM payment_requests WHERE id=?`).get(id);
+  if (!r || r.payer_account !== u.account_id) return err(404, 'no_request');
+  db.prepare(`UPDATE payment_requests SET status='declined' WHERE id=? AND status='pending'`).run(id);
+  return ok({ ok: true });
+}
+
 // ---------- Sou-Sou (digital partner-hand / rotating savings) ----------
 function shapeSousou(s, viewer) {
   const members = db.prepare(`SELECT m.account_id, m.position, m.received, a.name, a.color FROM sousou_members m JOIN accounts a ON a.id=m.account_id WHERE m.sousou_id=? ORDER BY m.position`).all(s.id);

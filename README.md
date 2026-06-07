@@ -31,6 +31,8 @@ Want a public link to text someone? `brew install cloudflared && npm run live`.
   **send-money-in-chat** tied to the wallet.
 - **Voice & video calls** — WebRTC (STUN out of the box; set `TURN_*` env for full NAT
   coverage). Audio/video, mute, camera toggle, incoming-call accept/decline.
+- **Proof-of-reserve** — verify your funds are 100% backed (per-currency conservation), in-app. No bank shows you this.
+- **Request money & split bills** — request a payback or split a tab equally; payers get one-tap requests.
 - **Sou-Sou** 🇧🇸 — the Caribbean partner-hand, digitized: rotating savings clubs where
   everyone pays in each round and the pot rotates to one member, with real money and
   auto-payout. No organizer holding the cash. (Nobody else has this.)

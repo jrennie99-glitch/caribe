@@ -60,6 +60,12 @@ export const api = {
   sousouList:   ()  => request('GET',  '/sousou/list'),
   sousouCreate: (b) => request('POST', '/sousou/create', b),
   sousouContribute: (b) => request('POST', '/sousou/contribute', b),
+  reserve:      ()  => request('GET',  '/reserve'),
+  requestMoney: (b) => request('POST', '/request', b),
+  splitBill:    (b) => request('POST', '/split', b),
+  requests:     ()  => request('GET',  '/requests'),
+  payRequest:   (b) => request('POST', '/requests/pay', b),
+  declineRequest:(b)=> request('POST', '/requests/decline', b),
   callConfig:   ()  => request('GET',  '/call/config'),
   callSignal:   (b) => request('POST', '/call/signal', b),
 };
