@@ -1,0 +1,13 @@
+{
+  "name": "caribe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Caribe — the everything app for the islands. Real wallet on a Sand Dollar adapter.",
+  "scripts": {
+    "start": "node --no-warnings server/server.js",
+    "dev": "node --no-warnings --watch server/server.js",
+    "reset": "rm -f server/caribe.db && echo 'database reset'"
+  },
+  "engines": { "node": ">=22.5" }
+}

@@ -1,0 +1,7 @@
+node_modules/
+server/caribe.db
+server/caribe.db-*
+server/.secret
+*.log
+.DS_Store
+.gstack/
