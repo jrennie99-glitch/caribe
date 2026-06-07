@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { islandByCurrency } from './islands.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const db = new DatabaseSync(join(__dirname, 'caribe.db'));
@@ -65,6 +66,24 @@ CREATE INDEX IF NOT EXISTS idx_txn_accounts ON transactions(from_account, to_acc
 export const now = () => Date.now();
 export const uuid = () => randomUUID();
 
+/**
+ * Treasury + revenue accounts for a currency, created on demand. BSD reuses the original
+ * 'treasury' / 'app_revenue' accounts; every other currency gets its own pair so each
+ * island's books balance independently.
+ */
+export function systemAccounts(currency) {
+  if (currency === 'BSD') return { treasury: 'treasury', revenue: 'app_revenue' };
+  const treasury = 'treasury_' + currency, revenue = 'app_revenue_' + currency;
+  const island = islandByCurrency(currency)?.code || 'BS';
+  const t = now();
+  const ins = db.prepare(`INSERT OR IGNORE INTO accounts
+    (id,name,kind,handle,color,emoji,category,balance_cents,allow_negative,currency,island,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+  ins.run(treasury, currency + ' Treasury', 'treasury', null, '#1fb87a', '🏦', null, 0, 1, currency, island, t);
+  ins.run(revenue,  currency + ' Revenue',  'treasury', null, '#7c5cff', '📈', null, 0, 0, currency, island, t);
+  return { treasury, revenue };
+}
+
 // ---- migrations: additive, idempotent (safe on existing databases) ----
 function hasColumn(table, col) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === col);
@@ -78,6 +97,8 @@ function migrate() {
   if (!hasColumn('users', 'kyc_status'))         db.exec(`ALTER TABLE users ADD COLUMN kyc_status TEXT NOT NULL DEFAULT 'verified_basic'`);
   if (!hasColumn('users', 'id_doc_path'))        db.exec(`ALTER TABLE users ADD COLUMN id_doc_path TEXT`);
   if (!hasColumn('users', 'kyc_reviewed_at'))    db.exec(`ALTER TABLE users ADD COLUMN kyc_reviewed_at INTEGER`);
+  if (!hasColumn('accounts', 'currency'))        db.exec(`ALTER TABLE accounts ADD COLUMN currency TEXT NOT NULL DEFAULT 'BSD'`);
+  if (!hasColumn('accounts', 'island'))          db.exec(`ALTER TABLE accounts ADD COLUMN island TEXT NOT NULL DEFAULT 'BS'`);
   // Caribe's revenue account — where all fees land. Exists on every database.
   db.prepare(`INSERT OR IGNORE INTO accounts (id,name,kind,handle,color,emoji,category,balance_cents,allow_negative,created_at)
               VALUES ('app_revenue','Caribe Revenue','treasury',NULL,'#7c5cff','📈',NULL,0,0,?)`).run(now());

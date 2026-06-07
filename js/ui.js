@@ -4,7 +4,7 @@ import * as store from './store.js';
 
 const $ = (sel, r=document) => r.querySelector(sel);
 const app = () => document.getElementById('app');
-const SYM = 'B$';
+let SYM = 'B$';   // set per logged-in user's currency in render()
 
 // ---------- icon set (crisp line SVGs, no emoji chrome) ----------
 const ICONS = {
@@ -183,6 +183,7 @@ function payBiller(billerId,name){
 
 let tab = 'home';
 let authMode = 'register';
+let REG_ISLANDS = null;   // islands cache for the signup picker
 
 // ---------- helpers ----------
 const initials = (n) => (n||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
@@ -235,21 +236,26 @@ function renderRegister(){
    </div>`;
   $('#toLogin').onclick=()=>{authMode='login';render();};
   let step=0; const body=$('#obbody'), next=$('#obnext');
-  const data={role:'personal',name:'',business:'',category:'Food',phone:'',dob:'',idNumber:'',pin:''};
+  const data={role:'personal',name:'',business:'',category:'Food',phone:'',dob:'',idNumber:'',pin:'',island:'BS'};
   const CATS=['Food','Grocery','Retail','Transit','Health','Services','Other'];
+  if(REG_ISLANDS===null){ api.islands().then(r=>{ REG_ISLANDS=r.islands.filter(i=>i.live); if(step===0) draw(); }).catch(()=>{REG_ISLANDS=[];}); }
   const grab=()=>{
     if($('#i_name')) data.name=$('#i_name').value.trim();
     if($('#i_biz')) data.business=$('#i_biz').value.trim();
     if($('#i_cat')) data.category=$('#i_cat').value;
     if($('#i_phone')) data.phone=$('#i_phone').value.trim();
+    if($('#i_island')) data.island=$('#i_island').value;
     if($('#i_dob')) data.dob=$('#i_dob').value.trim();
     if($('#i_id')) data.idNumber=$('#i_id').value.trim();
     if($('#i_pin')) data.pin=$('#i_pin').value.trim();
   };
+  const islandOpts=()=>{ const list=REG_ISLANDS&&REG_ISLANDS.length?REG_ISLANDS:[{code:'BS',name:'The Bahamas',currency:'BSD'}];
+    return list.map(i=>`<option value="${i.code}" ${data.island===i.code?'selected':''}>${i.name} (${i.currency})</option>`).join(''); };
   const draw=()=>{
     if(step===0){
       const seg=(r,l)=>`<div class="segbtn ${data.role===r?'on':''}" data-role="${r}">${l}</div>`;
       body.innerHTML=`<div class="seg">${seg('personal','Personal')}${seg('business','Business')}</div>
+        <div class="field"><label>Your island</label><select id="i_island">${islandOpts()}</select></div>
         ${data.role==='business'?`
           <div class="field"><label>Business name</label><input id="i_biz" placeholder="e.g. Goldie's Conch Shack" value="${data.business}"></div>
           <div class="field"><label>Category</label><select id="i_cat">${CATS.map(c=>`<option ${data.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
@@ -329,9 +335,9 @@ function renderHome(){
     || `<div class="row" style="cursor:default"><div class="m"><div class="s">No activity yet — cash in to get started.</div></div></div>`;
   screen(`
     <div class="hero">
-      <div class="label">Sand Dollar balance</div>
+      <div class="label">${s.user.currency} balance</div>
       <div class="bal tnum"><small>${SYM}</small><span id="balnum">${store.fmt(store.balance())}</span></div>
-      <div class="sub"><span class="dot"></span> Sand Dollar (sandbox) · instant &amp; free</div>
+      <div class="sub"><span class="dot"></span> ${s.user.islandName} · instant &amp; free</div>
     </div>
     <div class="quick">
       <div class="qa" data-act="send"><div class="ic">${icon('send')}</div><div class="t">Send</div></div>
@@ -376,8 +382,13 @@ function renderDiscover(){
       <div class="av" style="background:${m.color}">${m.emoji||'🏬'}</div>
       <div class="m"><div class="n">${m.name}</div><div class="s">${m.category||''} · accepts Sand Dollar</div></div>
       <div class="badge">Pay ›</div></div>`).join('')}</div>
-    <p class="note">The WeChat move: Caribe owns the rail; any shop, ferry, clinic or government
-      service builds a mini-app on top. You don't build every service — they do.</p>`);
+    <div class="sec"><h3>Caribbean network</h3><span class="badge">${s.islands.filter(i=>i.live).length} islands</span></div>
+    <div class="card">${s.islands.map(i=>`<div class="row" style="cursor:default">
+      <div class="av" style="background:${i.live?'linear-gradient(135deg,var(--sea),var(--aqua))':'#9fb4bf'};font-size:12px">${i.symbol}</div>
+      <div class="m"><div class="n">${i.name}</div><div class="s">${i.currency} · ${i.live?'live':'coming soon'}</div></div>
+      ${i.code===s.user.island?'<span class="badge">You</span>':(i.live?'<span class="dot" style="background:var(--ok)"></span>':'')}</div>`).join('')}</div>
+    <p class="note">One app, every island. Send money home across the Caribbean — Caribe converts the
+      currency and settles instantly. The rail nobody owns yet.</p>`);
   app().querySelectorAll('[data-mini]').forEach(n=>n.onclick=()=>runMini(n.dataset.mini));
   app().querySelectorAll('[data-pay]').forEach(n=>n.onclick=()=>payMerchant(n.dataset.pay));
 }
@@ -587,6 +598,7 @@ export async function render(){
     try{ await store.loadAll(); }
     catch(e){ clearToken(); return renderAuth(); }
   }
+  SYM = store.get().user.symbol || 'B$';
   const merchant=store.get().user.accountKind==='merchant';
   if(merchant){
     if(tab==='activity') return renderActivity();

@@ -40,6 +40,7 @@ const ROUTES = [
   ['GET',  '/api/summary',      (uid)    => api.summary(uid),      true ],
   ['GET',  '/api/health',       ()       => api.health(),          false],
   ['GET',  '/api/fees',         ()       => api.fees(),            false],
+  ['GET',  '/api/islands',      ()       => api.islands(),         false],
   ['POST', '/api/kyc/document', (uid,b)        => api.kycDocument(uid, b),   true ],
   ['GET',  '/api/kyc/pending',  (uid,b,q,h)    => api.kycPending(uid, b, q, h),  false],
   ['POST', '/api/kyc/review',   (uid,b,q,h)    => api.kycReview(uid, b, q, h),   false],

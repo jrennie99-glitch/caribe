@@ -39,5 +39,6 @@ export const api = {
   cashout:  (b) => request('POST', '/cashout', b),
   health:   ()  => request('GET',  '/health'),
   fees:     ()  => request('GET',  '/fees'),
+  islands:  ()  => request('GET',  '/islands'),
   kycDocument: (b) => request('POST', '/kyc/document', b),
 };

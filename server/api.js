@@ -1,9 +1,10 @@
 // api.js — request handlers. Pure functions returning {status, body}.
-import { db, uuid, now } from './db.js';
+import { db, uuid, now, systemAccounts } from './db.js';
 import { hashPin, verifyPin, issueToken, isAdmin } from './auth.js';
 import { rail } from './rail.js';
-import { postTransfer, balanceOf, historyFor, reconcile, summaryFor, moneyConserved, LedgerError } from './ledger.js';
-import { feeFor, FEE_SCHEDULE, REVENUE_ACCOUNT } from './fees.js';
+import { postTransfer, postCrossBorder, balanceOf, historyFor, reconcile, summaryFor, currencyConservation, LedgerError } from './ledger.js';
+import { feeFor, FEE_SCHEDULE } from './fees.js';
+import { ISLANDS, islandByCode, symbolFor, fxConvertCents, rate, FX_SPREAD_BPS } from './islands.js';
 import { settlementStats } from './rail.js';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +44,8 @@ function publicUser(u) {
     accountKind: acct.kind,                 // 'user' or 'merchant'
     businessName: acct.kind === 'merchant' ? acct.name : null,
     category: acct.category || null,
+    currency: acct.currency, symbol: symbolFor(acct.currency),
+    island: acct.island, islandName: islandByCode(acct.island)?.name || acct.island,
   };
 }
 
@@ -56,8 +59,11 @@ function spentTodayCents(accountId) {
 }
 
 // ---------- auth ----------
-export async function register({ name, phone, pin, role, business, category, dob, idNumber }) {
+export async function register({ name, phone, pin, role, business, category, dob, idNumber, island }) {
   name = (name || '').trim(); phone = (phone || '').trim(); pin = String(pin || '').trim();
+  const isle = islandByCode(island) || islandByCode('BS');
+  if (island && !islandByCode(island)) return err(400, 'bad_island', 'Unknown island');
+  if (island && !isle.live) return err(403, 'island_not_live', `${isle.name} is not live yet`);
   const isMerchant = role === 'merchant';
   business = (business || '').trim(); category = (category || '').trim();
   dob = (dob || '').trim(); idNumber = (idNumber || '').trim();
@@ -84,10 +90,10 @@ export async function register({ name, phone, pin, role, business, category, dob
   const t = now();
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare(`INSERT INTO accounts (id,name,kind,handle,color,emoji,category,balance_cents,allow_negative,created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    db.prepare(`INSERT INTO accounts (id,name,kind,handle,color,emoji,category,balance_cents,allow_negative,currency,island,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(accountId, acctName, acctKind, handle, isMerchant ? '#ff6f61' : '#16a7c9',
-           isMerchant ? '🏪' : null, isMerchant ? (category || 'Shop') : null, 0, 0, t);
+           isMerchant ? '🏪' : null, isMerchant ? (category || 'Shop') : null, 0, 0, isle.currency, isle.code, t);
     db.prepare(`INSERT INTO users (id,account_id,name,phone,pin_hash,kyc_tier,rail_account_id,dob,id_number,created_at)
                 VALUES (?,?,?,?,?,?,?,?,?,?)`)
       .run(userId, accountId, name, phone, hashPin(pin), tier, prov.railAccountId, dob, idNumber, t);
@@ -114,10 +120,10 @@ export async function me(userId) {
 export async function directory(userId) {
   const u = userById.get(userId);
   const contacts = db.prepare(
-    `SELECT a.id, a.name, a.handle, a.color FROM accounts a
+    `SELECT a.id, a.name, a.handle, a.color, a.currency, a.island FROM accounts a
        WHERE a.kind='user' AND a.id != ? ORDER BY a.created_at`).all(u.account_id);
   const merchants = db.prepare(
-    `SELECT id,name,category,color,emoji FROM accounts WHERE kind='merchant' ORDER BY name`).all();
+    `SELECT id,name,category,color,emoji,currency,island FROM accounts WHERE kind='merchant' ORDER BY name`).all();
   const billers = db.prepare(
     `SELECT id,name,color,emoji FROM accounts WHERE kind='biller' ORDER BY name`).all();
   return ok({ contacts, merchants, billers });
@@ -136,17 +142,24 @@ export async function summary(userId) {
 
 export async function health() {
   const problems = reconcile();
-  const mc = moneyConserved();
+  const cc = currencyConservation();
   return ok({
-    ok: problems.length === 0 && mc.conserved,
+    ok: problems.length === 0 && cc.conserved,
     ledgerSound: problems.length === 0, problems,
-    revenueCents: balanceOf(REVENUE_ACCOUNT),
-    moneyConserved: mc.conserved, conservation: mc,
+    revenueCents: balanceOf('app_revenue'),
+    moneyConserved: cc.conserved, conservation: cc.byCurrency,
     settlements: settlementStats(),
   });
 }
 
 export async function fees() { return ok({ schedule: FEE_SCHEDULE }); }
+
+export async function islands() {
+  return ok({
+    islands: ISLANDS.map(i => ({ code: i.code, name: i.name, currency: i.currency, symbol: i.symbol, rail: i.rail, live: i.live })),
+    fxSpreadBps: FX_SPREAD_BPS,
+  });
+}
 
 // ---------- KYC (real: capture → review → tier upgrade) ----------
 export async function kycDocument(userId, { imageBase64 } = {}) {
@@ -198,15 +211,38 @@ async function move(userId, { toId, amountCents, memo, kind, idempotencyKey }) {
   const u = userById.get(userId);
   if (!u) return err(401, 'no_user');
   if (!Number.isInteger(amountCents) || amountCents <= 0) return err(400, 'bad_amount', 'Enter a valid amount');
-  if (!accountById.get(toId)) return err(404, 'no_payee', 'Payee not found');
+  const payee = accountById.get(toId);
+  if (!payee) return err(404, 'no_payee', 'Payee not found');
   const limited = enforceSendLimit(u, amountCents);
   if (limited) return limited;
+  const srcCur = accountById.get(u.account_id).currency;
+  const dstCur = payee.currency;
   try {
+    if (srcCur !== dstCur) {
+      // ---- cross-island transfer with FX ----
+      const dstMid = fxConvertCents(amountCents, srcCur, dstCur);
+      if (dstMid == null) return err(400, 'no_rate', 'No FX rate between these islands');
+      const spread = Math.floor((dstMid * FX_SPREAD_BPS) / 10000);
+      const dstOffered = dstMid - spread;
+      const sysS = systemAccounts(srcCur), sysD = systemAccounts(dstCur);
+      const r = rate(srcCur, dstCur);
+      const txn = postCrossBorder({
+        fromId: u.account_id, toId, srcCents: amountCents,
+        dstMidCents: dstMid, dstOfferedCents: dstOffered, spreadCents: spread,
+        srcTreasury: sysS.treasury, dstTreasury: sysD.treasury, dstRevenue: sysD.revenue,
+        memo: memo || `→ ${symbolFor(dstCur)}${(dstOffered/100).toFixed(2)} ${dstCur}`,
+        railRef: 'SD-FX-' + uuid().slice(0, 8).toUpperCase(), idempotencyKey, kind: 'xborder',
+      });
+      return ok({ txn: { id: txn.id, ref: txn.rail_ref, amount: amountCents }, crossBorder: true,
+        srcCurrency: srcCur, dstCurrency: dstCur, dstAmount: dstOffered, rate: r, fee: spread,
+        balance: balanceOf(u.account_id) });
+    }
+    // ---- same-currency ----
     const fee = feeFor(kind, amountCents);
     const feePayer = fee.payer === 'recipient' ? toId : u.account_id;
     const txn = postTransfer({ fromId: u.account_id, toId, amountCents, kind, memo, idempotencyKey,
       railRef: 'SD-TX-' + uuid().slice(0,8).toUpperCase(),
-      feeCents: fee.cents, feePayer, feeAccount: REVENUE_ACCOUNT });
+      feeCents: fee.cents, feePayer, feeAccount: systemAccounts(srcCur).revenue });
     return ok({ txn: { id: txn.id, ref: txn.rail_ref, amount: txn.amount_cents },
       fee: fee.cents, feePayer: fee.payer, balance: balanceOf(u.account_id) });
   } catch (e) {
@@ -230,12 +266,13 @@ export async function cashin(userId, { amountCents, idempotencyKey }) {
   if (balanceOf(u.account_id) + amountCents > lim.holdMax) {
     return err(403, 'hold_limit', `Wallet hold limit is B$${(lim.holdMax/100).toFixed(0)} on Tier ${u.kyc_tier}.`);
   }
-  // Bridge external Sand Dollar funds in, then credit the wallet from treasury (real double-entry).
+  // Bridge external funds in, then credit the wallet from that currency's treasury.
   const r = await rail.cashIn(u.rail_account_id, amountCents, u.account_id);
-  if (!r.ok) return err(502, 'rail_error', 'Sand Dollar cash-in failed');
+  if (!r.ok) return err(502, 'rail_error', 'Cash-in failed');
+  const sys = systemAccounts(accountById.get(u.account_id).currency);
   const fee = feeFor('cashin', amountCents);
-  const txn = postTransfer({ fromId: 'treasury', toId: u.account_id, amountCents, kind: 'cashin', memo: 'Cash in · Sand Dollar', railRef: r.ref, idempotencyKey,
-    feeCents: fee.cents, feePayer: u.account_id, feeAccount: REVENUE_ACCOUNT });
+  const txn = postTransfer({ fromId: sys.treasury, toId: u.account_id, amountCents, kind: 'cashin', memo: 'Cash in', railRef: r.ref, idempotencyKey,
+    feeCents: fee.cents, feePayer: u.account_id, feeAccount: sys.revenue });
   return ok({ txn: { id: txn.id, ref: txn.rail_ref }, fee: fee.cents, balance: balanceOf(u.account_id) });
 }
 
@@ -244,9 +281,10 @@ export async function cashout(userId, { amountCents, idempotencyKey }) {
   if (!u) return err(401, 'no_user');
   if (!Number.isInteger(amountCents) || amountCents <= 0) return err(400, 'bad_amount');
   try {
+    const sys = systemAccounts(accountById.get(u.account_id).currency);
     const fee = feeFor('cashout', amountCents);
-    const txn = postTransfer({ fromId: u.account_id, toId: 'treasury', amountCents, kind: 'cashout', memo: 'Cash out · Sand Dollar', idempotencyKey,
-      feeCents: fee.cents, feePayer: u.account_id, feeAccount: REVENUE_ACCOUNT });
+    const txn = postTransfer({ fromId: u.account_id, toId: sys.treasury, amountCents, kind: 'cashout', memo: 'Cash out', idempotencyKey,
+      feeCents: fee.cents, feePayer: u.account_id, feeAccount: sys.revenue });
     const r = await rail.cashOut(u.rail_account_id, amountCents, u.account_id);
     if (!r.ok) throw new Error('rail cashout failed');
     return ok({ txn: { id: txn.id, ref: txn.rail_ref }, fee: fee.cents, balance: balanceOf(u.account_id) });

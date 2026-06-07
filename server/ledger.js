@@ -84,6 +84,39 @@ export function postTransfer({ fromId, toId, amountCents, kind = 'transfer', mem
   }
 }
 
+/**
+ * Cross-island transfer with FX. Two currency legs, ONE atomic transaction:
+ *   src leg: sender(srcCur) → src treasury        (srcCents)
+ *   dst leg: dst treasury → receiver(dstCur)      (dstMid; receiver gets dstOffered,
+ *            the FX spread → dst revenue)          (-mid + offered + spread = 0)
+ * Each currency nets to zero, so per-currency conservation holds.
+ */
+export function postCrossBorder({ fromId, toId, srcCents, dstMidCents, dstOfferedCents, spreadCents,
+                                  srcTreasury, dstTreasury, dstRevenue, memo = null, railRef = null,
+                                  idempotencyKey = null, kind = 'xborder' }) {
+  if (!Number.isInteger(srcCents) || srcCents <= 0) throw new LedgerError('BAD_AMOUNT', 'Bad amount');
+  if (idempotencyKey) { const e = findByKey.get(idempotencyKey); if (e) return e; }
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const from = getAccount.get(fromId), to = getAccount.get(toId);
+    if (!from || !to) throw new LedgerError('NO_SUCH_ACCOUNT', 'Account not found');
+    if (!from.allow_negative && from.balance_cents < srcCents) throw new LedgerError('INSUFFICIENT_FUNDS', 'Not enough balance');
+    const t = now(), txnId = uuid();
+    insTxn.run(txnId, idempotencyKey, fromId, toId, srcCents, kind, memo, railRef, spreadCents, dstRevenue, null, t);
+    // src leg
+    insEntry.run(uuid(), txnId, fromId, 'debit', srcCents, t);
+    insEntry.run(uuid(), txnId, srcTreasury, 'credit', srcCents, t);
+    updBal.run(-srcCents, fromId); updBal.run(srcCents, srcTreasury);
+    // dst leg
+    insEntry.run(uuid(), txnId, dstTreasury, 'debit', dstMidCents, t);
+    insEntry.run(uuid(), txnId, toId, 'credit', dstOfferedCents, t);
+    updBal.run(-dstMidCents, dstTreasury); updBal.run(dstOfferedCents, toId);
+    if (spreadCents > 0) { insEntry.run(uuid(), txnId, dstRevenue, 'credit', spreadCents, t); updBal.run(spreadCents, dstRevenue); }
+    db.exec('COMMIT');
+    return getTxn(txnId);
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
+
 export const getTxn = (id) => db.prepare(`SELECT * FROM transactions WHERE id = ?`).get(id);
 export const balanceOf = (accountId) => getAccount.get(accountId)?.balance_cents ?? 0;
 
@@ -141,6 +174,18 @@ export function moneyConserved() {
   const issued = -(db.prepare(`SELECT COALESCE(SUM(balance_cents),0) b FROM accounts WHERE kind='treasury' AND id='treasury'`).get().b);
   const held = db.prepare(`SELECT COALESCE(SUM(balance_cents),0) b FROM accounts WHERE id NOT IN ('treasury')`).get().b;
   return { conserved: issued === held, issued, held, diff: held - issued };
+}
+
+/**
+ * Per-currency conservation: within each currency, every transaction is balanced
+ * double-entry, so the sum of ALL balances in that currency must be exactly 0.
+ * (Treasuries go negative by what they've issued; users/merchants/revenue hold the rest.)
+ */
+export function currencyConservation() {
+  const rows = db.prepare(`SELECT currency, COALESCE(SUM(balance_cents),0) net, COUNT(*) accounts FROM accounts GROUP BY currency`).all();
+  let conserved = true; const byCurrency = {};
+  for (const r of rows) { byCurrency[r.currency] = { net: r.net, accounts: r.accounts }; if (r.net !== 0) conserved = false; }
+  return { conserved, byCurrency };
 }
 
 /**

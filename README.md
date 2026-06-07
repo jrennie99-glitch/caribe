@@ -81,6 +81,27 @@ to reprice; set a `bps` on cash-in if you ever want to charge it.
 The fee is shown to the user in the keypad *before* they confirm (e.g. "Caribe fee B$0.50
 · total B$100.50"). `GET /api/health` reports total revenue collected (`revenueCents`).
 
+## Caribbean network (multi-island)
+
+Caribe is a network of island nodes sharing one platform core. `server/islands.js` is the
+registry of every Caribbean territory (currency, symbol, FX reference rate, rail). Each
+account belongs to an island and holds its currency; each currency has its own treasury
+and revenue accounts, so every island's books balance independently.
+
+**Cross-island transfers** convert through USD at the registry rates, with a transparent
+**FX margin** (`FX_SPREAD_BPS`, default 1.5%) booked to that currency's revenue account.
+The whole thing is one atomic transaction (`ledger.postCrossBorder`): the source currency
+leg and destination currency leg both net to zero, so **per-currency conservation** always
+holds (`GET /api/health` → `conservation`).
+
+Example (verified): a Bahamas wallet sends **B$100** to a Jamaica wallet → recipient gets
+**J$15,464.50** at 1 BSD = 157 JMD, Caribe earns **J$235.50** FX margin, and both BSD and
+JMD ledgers net to exactly 0.
+
+Each island's connection to its *local* production rail (its CBDC / bank) needs that
+country's credentials — the same honest boundary as the Bahamas Sand Dollar. The network
+engine itself is real and live for all islands now. `GET /api/islands` lists them.
+
 ## Architecture
 
 ```
