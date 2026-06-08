@@ -196,6 +196,76 @@ export async function demo() {
   return ok({ token: issueToken(u.id), user: publicUser(userById.get(u.id)) });
 }
 
+// ---------- universal orders + escrow (food / taxi / groceries / anything) ----------
+function escrowAccount(cur) {
+  const id = 'escrow_' + cur;
+  db.prepare(`INSERT OR IGNORE INTO accounts (id,name,kind,handle,color,emoji,category,balance_cents,allow_negative,currency,island,created_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, cur + ' Escrow', 'treasury', null, '#f5b53d', '🔒', null, 0, 0, cur, islandByCode('BS')?.code || 'BS', now());
+  return id;
+}
+function shapeOrder(o, viewer) {
+  const cust = accountById.get(o.customer_account), prov = o.provider_account ? accountById.get(o.provider_account) : null;
+  return {
+    id: o.id, category: o.category, title: o.title, details: o.details ? JSON.parse(o.details) : null,
+    amount: o.amount_cents, symbol: symbolFor(o.currency), status: o.status, ts: o.created_at,
+    customer: cust?.name, provider: prov?.name,
+    role: o.customer_account === viewer ? 'customer' : (o.provider_account === viewer ? 'provider' : 'other'),
+  };
+}
+const ORDER_FLOW = { placed: 'accepted', open: 'accepted', accepted: 'in_progress', in_progress: 'completed' };
+export async function orderCreate(userId, { providerAccount, category, title, details, amountCents, open } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const me = accountById.get(u.account_id), cur = me.currency;
+  category = (category || 'service').toString(); title = (title || 'Order').toString().slice(0, 120);
+  if (!Number.isInteger(amountCents) || amountCents <= 0) return err(400, 'amount');
+  let provider = null;
+  if (providerAccount) { const p = accountById.get(providerAccount); if (!p) return err(404, 'no_provider'); if (p.currency !== cur) return err(400, 'currency', 'Provider is on another island'); provider = p.id; }
+  else if (!open) return err(400, 'no_provider', 'Pick a provider');
+  try { postTransfer({ fromId: me.id, toId: escrowAccount(cur), amountCents, kind: 'order_hold', memo: title }); }
+  catch (e) { if (e instanceof LedgerError && e.code === 'INSUFFICIENT_FUNDS') return err(402, 'insufficient_funds', 'Not enough balance'); throw e; }
+  const id = 'ord_' + uuid().slice(0, 10), t = now();
+  db.prepare(`INSERT INTO orders (id,customer_account,provider_account,category,title,details,amount_cents,currency,status,created_at,updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, me.id, provider, category, title, details ? JSON.stringify(details) : null, amountCents, cur, open ? 'open' : 'placed', t, t);
+  return ok({ order: shapeOrder(db.prepare(`SELECT * FROM orders WHERE id=?`).get(id), me.id) });
+}
+export async function orderList(userId) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const acct = u.account_id, isMerchant = accountById.get(acct).kind === 'merchant';
+  const mine = db.prepare(`SELECT * FROM orders WHERE customer_account=? ORDER BY created_at DESC LIMIT 30`).all(acct);
+  const incoming = db.prepare(`SELECT * FROM orders WHERE provider_account=? AND status NOT IN ('completed','cancelled') ORDER BY created_at DESC`).all(acct);
+  const open = isMerchant ? db.prepare(`SELECT * FROM orders WHERE status='open' ORDER BY created_at DESC LIMIT 20`).all() : [];
+  return ok({ mine: mine.map(o => shapeOrder(o, acct)), incoming: incoming.map(o => shapeOrder(o, acct)), open: open.map(o => shapeOrder(o, acct)) });
+}
+export async function orderClaim(userId, { id } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  if (accountById.get(u.account_id).kind !== 'merchant') return err(403, 'not_provider', 'Only providers can accept');
+  const o = db.prepare(`SELECT * FROM orders WHERE id=?`).get(id); if (!o) return err(404, 'no_order');
+  if (o.status !== 'open') return err(400, 'taken', 'Already taken');
+  db.prepare(`UPDATE orders SET provider_account=?, status='accepted', updated_at=? WHERE id=? AND status='open'`).run(u.account_id, now(), id);
+  return ok({ order: shapeOrder(db.prepare(`SELECT * FROM orders WHERE id=?`).get(id), u.account_id) });
+}
+export async function orderUpdate(userId, { id, status } = {}) {
+  const u = userById.get(userId); if (!u) return err(401, 'no_user');
+  const o = db.prepare(`SELECT * FROM orders WHERE id=?`).get(id); if (!o) return err(404, 'no_order');
+  const acct = u.account_id;
+  if (status === 'cancelled') {
+    if (acct !== o.customer_account && acct !== o.provider_account) return err(403, 'not_yours');
+    if (['completed', 'cancelled'].includes(o.status)) return err(400, 'done');
+    postTransfer({ fromId: escrowAccount(o.currency), toId: o.customer_account, amountCents: o.amount_cents, kind: 'order_refund', memo: 'Refund: ' + o.title });
+    db.prepare(`UPDATE orders SET status='cancelled', updated_at=? WHERE id=?`).run(now(), id);
+    return ok({ order: shapeOrder(db.prepare(`SELECT * FROM orders WHERE id=?`).get(id), acct) });
+  }
+  if (acct !== o.provider_account) return err(403, 'not_provider');
+  if (ORDER_FLOW[o.status] !== status) return err(400, 'bad_status', 'Invalid transition');
+  if (status === 'completed') {
+    const fee = feeFor('payment', o.amount_cents).cents; // platform take-rate
+    postTransfer({ fromId: escrowAccount(o.currency), toId: o.provider_account, amountCents: o.amount_cents, kind: 'order_release',
+      feeCents: fee, feePayer: o.provider_account, feeAccount: systemAccounts(o.currency).revenue, memo: 'Order: ' + o.title });
+  }
+  db.prepare(`UPDATE orders SET status=?, updated_at=? WHERE id=?`).run(status, now(), id);
+  return ok({ order: shapeOrder(db.prepare(`SELECT * FROM orders WHERE id=?`).get(id), acct) });
+}
+
 // ---------- proof of reserve (verifiable backing) ----------
 export async function reserve(userId) {
   const u = userById.get(userId); if (!u) return err(401, 'no_user');

@@ -155,6 +155,14 @@ function migrate() {
     status TEXT NOT NULL DEFAULT 'pending', group_id TEXT, created_at INTEGER NOT NULL)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_req_payer ON payment_requests(payer_account, status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_req_requester ON payment_requests(requester_account)`);
+  // Universal orders + escrow (food, rides, groceries, services — everything)
+  db.exec(`CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY, customer_account TEXT NOT NULL, provider_account TEXT,
+    category TEXT NOT NULL, title TEXT NOT NULL, details TEXT, amount_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'placed', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_account, created_at DESC)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_orders_provider ON orders(provider_account, status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_orders_open ON orders(category, status)`);
 }
 migrate();
 

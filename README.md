@@ -40,6 +40,9 @@ Want a public link to text someone? `brew install cloudflared && npm run live`.
   natural language that executes real actions. (WeChat has nothing like it.)
 - **Spending insights** — real analytics on your ledger: weekly spend, trend, by category,
   top payees, fees.
+- **Order anything** — food, taxi/rides, groceries, services, all escrow-protected: pay
+  into escrow, provider fulfills, money releases on completion (or refunds on cancel),
+  platform takes a fee. Cart-based food ordering + ride requests with driver claim.
 - **Moments** — a social feed: post, like, comment.
 - **Mini-app platform** — merchant storefronts with in-app commerce (browse → buy → instant
   settlement); the foundation others build services on.

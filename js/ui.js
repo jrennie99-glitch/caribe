@@ -421,6 +421,9 @@ function renderDiscover(){
         <div class="chev">${icon('chev')}</div></div>
       <div class="row" data-sousou><div class="av" style="background:linear-gradient(135deg,var(--violet),var(--sea))">💞</div>
         <div class="m"><div class="n">Sou-Sou</div><div class="s">Save together — the partner-hand, digitized</div></div>
+        <div class="chev">${icon('chev')}</div></div>
+      <div class="row" data-services><div class="av" style="background:linear-gradient(135deg,var(--coral),var(--gold))">🍔</div>
+        <div class="m"><div class="n">Order anything</div><div class="s">Food · taxi · groceries · services</div></div>
         <div class="chev">${icon('chev')}</div></div></div>
     <div class="sec"><h3>Mini-apps</h3><span class="badge">platform</span></div>
     <div class="grid">${MINIS.map(m=>`<div class="mini" data-mini="${m.id}"><div class="ic">${m.ic}</div><div class="t">${m.t}</div></div>`).join('')}</div>
@@ -440,6 +443,7 @@ function renderDiscover(){
   app().querySelectorAll('[data-store]').forEach(n=>n.onclick=()=>{ const [id,nm,cat]=n.dataset.store.split('|'); storeMerchant={id,name:decodeURIComponent(nm),category:decodeURIComponent(cat)}; tab='store'; render(); });
   const mo=app().querySelector('[data-moments]'); if(mo) mo.onclick=()=>{ tab='moments'; render(); };
   const so=app().querySelector('[data-sousou]'); if(so) so.onclick=()=>{ tab='sousou'; render(); };
+  const sv=app().querySelector('[data-services]'); if(sv) sv.onclick=()=>{ tab='services'; render(); };
 }
 function runMini(id){
   if(id==='more') return moreMinis();
@@ -959,30 +963,101 @@ function commentSheet(postId){
 }
 
 // ---------- Mini-program: merchant storefronts ----------
-let storeMerchant=null;
+// ---------- services hub: order food / taxi / anything (escrow-backed) ----------
+const SERVICES=[
+  {id:'food',t:'Food',ic:'🍔',cats:['Food']},
+  {id:'grocery',t:'Groceries',ic:'🛒',cats:['Grocery']},
+  {id:'ride',t:'Taxi',ic:'🚕'},
+  {id:'orders',t:'My Orders',ic:'🧾'},
+];
+function renderServices(){
+  screen(`
+    <div class="backrow" data-back="discover">‹ Discover</div>
+    <div class="sec" style="margin-top:6px"><h3>Order anything</h3></div>
+    <div class="grid" style="grid-template-columns:repeat(4,1fr)">${SERVICES.map(s=>`<div class="mini" data-svc="${s.id}"><div class="ic">${s.ic}</div><div class="t">${s.t}</div></div>`).join('')}</div>
+    <p class="note">Food, rides, groceries, anything — paid safely through escrow. The provider only gets paid when your order is complete.</p>`);
+  app().querySelectorAll('[data-back]').forEach(n=>n.onclick=()=>{ tab=n.dataset.back; render(); });
+  app().querySelectorAll('[data-svc]').forEach(n=>n.onclick=()=>{ const s=SERVICES.find(x=>x.id===n.dataset.svc);
+    if(s.id==='ride') return rideRequest();
+    if(s.id==='orders'){ tab='orders'; return render(); }
+    svcCats=s.cats; svcTitle=s.t; tab='providers'; render(); });
+}
+let svcCats=null, svcTitle='';
+function renderProviders(){
+  const list=store.get().merchants.filter(m=>!svcCats||svcCats.includes(m.category));
+  screen(`
+    <div class="backrow" data-back="services">‹ Services</div>
+    <div class="sec" style="margin-top:6px"><h3>${svcTitle}</h3></div>
+    <div class="card">${list.length? list.map(m=>`<div class="row" data-store="${m.id}|${encodeURIComponent(m.name)}|${encodeURIComponent(m.category||'')}">
+      <div class="av" style="background:${m.color}">${m.emoji||'🏬'}</div><div class="m"><div class="n">${escapeHtml(m.name)}</div><div class="s">${m.category||''}</div></div>
+      <div class="badge pay">Order ›</div></div>`).join('') : '<div class="row" style="cursor:default"><div class="m"><div class="s">No providers yet.</div></div></div>'}</div>`);
+  app().querySelectorAll('[data-back]').forEach(n=>n.onclick=()=>{ tab=n.dataset.back; render(); });
+  app().querySelectorAll('[data-store]').forEach(n=>n.onclick=()=>{ const [id,nm,cat]=n.dataset.store.split('|'); storeMerchant={id,name:decodeURIComponent(nm),category:decodeURIComponent(cat)}; cart={}; tab='store'; render(); });
+}
+
+let storeMerchant=null, cart={};
 async function renderStore(){
   if(!storeMerchant){ tab='discover'; return render(); }
   let data; try{ data=await api.products(storeMerchant.id); }catch{ data={merchant:storeMerchant,products:[]}; }
-  const m=data.merchant;
+  const m=data.merchant; const total=Object.values(cart).reduce((a,i)=>a+i.price*i.qty,0); const count=Object.values(cart).reduce((a,i)=>a+i.qty,0);
   screen(`
-    <div class="backrow" data-back="discover">‹ Discover</div>
+    <div class="backrow" data-back="discover">‹ Back</div>
     <div class="hero" style="background:radial-gradient(120% 120% at 90% -10%,rgba(255,194,75,.5),transparent 55%),linear-gradient(135deg,var(--ocean),var(--coral))">
       <div class="label">${m.category||'Shop'} · mini-app</div>
       <div style="font-size:25px;font-weight:800;margin:6px 0 2px;letter-spacing:-.02em">${escapeHtml(m.name)}</div>
-      <div class="sub"><span class="dot"></span> accepts Sand Dollar</div></div>
+      <div class="sub"><span class="dot"></span> escrow-protected orders</div></div>
     <div class="sec"><h3>Menu</h3></div>
-    <div class="card">${data.products.length? data.products.map(p=>`<div class="row" data-buy="${p.id}|${encodeURIComponent(p.name)}|${p.price_cents}">
+    <div class="card" style="margin-bottom:90px">${data.products.length? data.products.map(p=>{const q=cart[p.id]?.qty||0; return `<div class="row" style="cursor:default">
       <div class="av" style="background:var(--sand)">${p.emoji||'🛍️'}</div>
       <div class="m"><div class="n">${escapeHtml(p.name)}</div><div class="s">${m.symbol||SYM}${store.fmt(p.price_cents)}</div></div>
-      <div class="badge pay">Buy ›</div></div>`).join('') : '<div class="row" style="cursor:default"><div class="m"><div class="s">No items listed yet.</div></div></div>'}</div>
-    <p class="note">A Caribe mini-app — a storefront on the platform. Pay in one tap; the merchant settles instantly.</p>`);
-  app().querySelectorAll('[data-back]').forEach(n=>n.onclick=()=>{ tab=n.dataset.back; render(); });
-  app().querySelectorAll('[data-buy]').forEach(n=>n.onclick=()=>{ const [id,nm,price]=n.dataset.buy.split('|'); buyItem(id,decodeURIComponent(nm),parseInt(price,10)); });
+      <div style="display:flex;align-items:center;gap:8px">${q?`<span class="qbtn" data-dec="${p.id}">−</span><b>${q}</b>`:''}<span class="qbtn add" data-add="${p.id}|${encodeURIComponent(p.name)}|${p.price_cents}">＋</span></div></div>`;}).join('') : '<div class="row" style="cursor:default"><div class="m"><div class="s">No items listed yet.</div></div></div>'}</div>
+    ${count?`<div class="orderbar"><div><b>${count} item${count>1?'s':''}</b> · ${m.symbol||SYM}${store.fmt(total)}</div><button class="btn" id="placeorder" style="width:auto;padding:0 22px">Place order</button></div>`:''}`);
+  app().querySelectorAll('[data-back]').forEach(n=>n.onclick=()=>{ tab='discover'; render(); });
+  app().querySelectorAll('[data-add]').forEach(n=>n.onclick=()=>{ const [id,nm,price]=n.dataset.add.split('|'); cart[id]=cart[id]||{name:decodeURIComponent(nm),price:parseInt(price,10),qty:0}; cart[id].qty++; renderStore(); });
+  app().querySelectorAll('[data-dec]').forEach(n=>n.onclick=()=>{ const id=n.dataset.dec; if(cart[id]){ cart[id].qty--; if(cart[id].qty<=0) delete cart[id]; } renderStore(); });
+  const po=$('#placeorder'); if(po) po.onclick=()=>placeOrder(m);
 }
-function buyItem(productId,name,price){
-  confirmPay(`Buy ${name}`, name, price, 'payment', async()=>{
-    await doMoney(()=>api.buyProduct({productId,idempotencyKey:newKey()}), 'Purchased', `${SYM}${store.fmt(price)} · ${name}`);
+function placeOrder(m){
+  const items=Object.entries(cart).map(([id,i])=>({id,name:i.name,price:i.price,qty:i.qty}));
+  const total=items.reduce((a,i)=>a+i.price*i.qty,0); const count=items.reduce((a,i)=>a+i.qty,0);
+  confirmPay(`Order from ${m.name}`, `${count} item${count>1?'s':''}`, total, null, async()=>{
+    const go=$('#go'); if(go){go.disabled=true;go.textContent='Placing…';}
+    try{ await api.orderCreate({providerAccount:storeMerchant.id, category:(m.category||'order').toLowerCase(), title:`${count} item${count>1?'s':''} from ${m.name}`, details:items, amountCents:total}); await store.refresh(); cart={}; closeSheet(); successSheet('Order placed','Held safely in escrow until it arrives.'); tab='orders'; }
+    catch(e){ if(go) shake('go', e.message||'Try again'); }
   });
+}
+function rideRequest(){
+  const bg=openSheet(`<h2>Request a ride 🚕</h2><p class="lead">Drivers nearby will accept. Fare held in escrow.</p>
+    <div class="field" style="margin:6px 0"><label>Pickup</label><input id="rfrom" placeholder="e.g. Cable Beach"></div>
+    <div class="field" style="margin:6px 0"><label>Drop-off</label><input id="rto" placeholder="e.g. Bay Street"></div>
+    <div class="field" style="margin:6px 0"><label>Fare you'll pay</label><input id="rfare" inputmode="decimal" placeholder="15.00"></div>
+    <button class="btn" id="rgo">Request ride</button>`);
+  $('#rgo',bg).onclick=async()=>{ const from=$('#rfrom',bg).value.trim(), to=$('#rto',bg).value.trim(), fare=Math.round(parseFloat($('#rfare',bg).value||'0')*100);
+    if(!from||!to||!fare) return shake('rgo','Fill all fields'); const b=$('#rgo',bg); b.disabled=true; b.textContent='Requesting…';
+    try{ await api.orderCreate({category:'ride', title:`${from} → ${to}`, details:{from,to}, amountCents:fare, open:true}); await store.refresh(); closeSheet(); successSheet('Ride requested 🚕','A driver will accept shortly. Fare held in escrow.'); tab='orders'; render(); }
+    catch(e){ b.disabled=false; b.textContent=e.message||'Try again'; } };
+}
+const ORDER_STATUS={open:'Waiting for a driver',placed:'Sent to provider',accepted:'Accepted',in_progress:'On the way',completed:'Completed',cancelled:'Cancelled'};
+const NEXT_LABEL={open:'Accept',placed:'Accept',accepted:'Start',in_progress:'Complete'};
+const NEXT_STATUS={placed:'accepted',accepted:'in_progress',in_progress:'completed'};
+async function renderOrders(){
+  let d; try{ d=await api.orders(); }catch{ d={mine:[],incoming:[],open:[]}; }
+  const card=(o,actions)=>`<div class="card" style="margin-bottom:10px;padding:14px 16px">
+    <div style="display:flex;align-items:center;gap:10px"><div class="av" style="background:var(--coral)">${o.category==='ride'?'🚕':(o.category==='grocery'?'🛒':'🍔')}</div>
+      <div class="m"><div class="n">${escapeHtml(o.title)}</div><div class="s">${o.symbol}${store.fmt(o.amount)} · ${o.provider?escapeHtml(o.provider):(o.customer?escapeHtml(o.customer):'')}</div></div>
+      <div style="text-align:right"><span class="badge ${o.status==='completed'?'':'pay'}">${ORDER_STATUS[o.status]||o.status}</span></div></div>
+    ${actions||''}</div>`;
+  screen(`
+    <div class="backrow" data-back="discover">‹ Discover</div>
+    ${d.open&&d.open.length?`<div class="sec" style="margin-top:6px"><h3>Open ride requests</h3></div>${d.open.map(o=>card(o,`<button class="btn" style="margin-top:10px" data-claim="${o.id}">Accept · earn ${o.symbol}${store.fmt(o.amount)}</button>`)).join('')}`:''}
+    ${d.incoming&&d.incoming.length?`<div class="sec" style="margin-top:6px"><h3>Orders to fulfill</h3></div>${d.incoming.map(o=>card(o, NEXT_STATUS[o.status]?`<button class="btn" style="margin-top:10px" data-adv="${o.id}|${NEXT_STATUS[o.status]}">${NEXT_LABEL[o.status]}</button>`:'')).join('')}`:''}
+    <div class="sec" style="margin-top:6px"><h3>Your orders</h3></div>
+    ${d.mine.length? d.mine.map(o=>card(o, (o.status==='placed'||o.status==='open')?`<button class="btn ghost" style="margin-top:10px" data-cancel="${o.id}">Cancel & refund</button>`:'')).join('') : '<div class="card" style="padding:16px"><div class="s muted">No orders yet. Order food, a ride, or anything from Services.</div></div>'}
+    <p class="note">Every order is escrow-protected: the provider is paid only when it's complete.</p>`);
+  app().querySelectorAll('[data-back]').forEach(n=>n.onclick=()=>{ tab=n.dataset.back; render(); });
+  app().querySelectorAll('[data-claim]').forEach(n=>n.onclick=async()=>{ n.disabled=true; try{ await api.orderClaim({id:n.dataset.claim}); renderOrders(); }catch(e){ toast(e.message||'Taken'); renderOrders(); } });
+  app().querySelectorAll('[data-adv]').forEach(n=>n.onclick=async()=>{ const [id,st]=n.dataset.adv.split('|'); n.disabled=true; try{ await api.orderUpdate({id,status:st}); await store.refresh(); renderOrders(); }catch(e){ toast(e.message||'Failed'); } });
+  app().querySelectorAll('[data-cancel]').forEach(n=>n.onclick=async()=>{ n.disabled=true; try{ await api.orderUpdate({id:n.dataset.cancel,status:'cancelled'}); await store.refresh(); renderOrders(); }catch(e){ toast(e.message||'Failed'); } });
 }
 
 // ---------- proof of reserve ----------
@@ -1184,6 +1259,9 @@ export async function render(){
   if(tab==='insights') return renderInsights();
   if(tab==='sousou') return renderSousou();
   if(tab==='reserve') return renderReserve();
+  if(tab==='services') return renderServices();
+  if(tab==='providers') return renderProviders();
+  if(tab==='orders') return renderOrders();
   const merchant=store.get().user.accountKind==='merchant';
   if(merchant){
     if(tab==='activity') return renderActivity();
